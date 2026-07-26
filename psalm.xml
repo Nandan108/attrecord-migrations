@@ -17,21 +17,24 @@
                 <directory name="tests" />
             </errorLevel>
         </PropertyNotSetInConstructor>
-        <!-- Test classes and properties are accessed by PHPUnit; Psalm cannot see the callers. -->
-        <UnusedClass>
+        <!-- #[\Override] requires PHP 8.3; suppress the nudge for test classes (mirrors attrecord). -->
+        <MissingOverrideAttribute>
             <errorLevel type="suppress">
                 <directory name="tests" />
             </errorLevel>
-        </UnusedClass>
+        </MissingOverrideAttribute>
+        <!-- Test properties are accessed by PHPUnit; Psalm cannot see the callers. -->
         <PossiblyUnusedProperty>
             <errorLevel type="suppress">
                 <directory name="tests" />
             </errorLevel>
         </PossiblyUnusedProperty>
-        <!-- The public facade's surface is consumed by downstream packages, not this repo. -->
+        <!-- src: the public facade's surface is consumed by downstream packages, not this repo.
+             tests: test methods live in shared Cases traits; PHPUnit is the (invisible) caller. -->
         <PossiblyUnusedMethod>
             <errorLevel type="suppress">
                 <directory name="src" />
+                <directory name="tests" />
             </errorLevel>
         </PossiblyUnusedMethod>
     </issueHandlers>
