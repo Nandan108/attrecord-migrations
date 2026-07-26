@@ -1,0 +1,68 @@
+{
+    "name": "nandan108/attrecord-migrations",
+    "description": "Declarative schema convergence for attrecord: introspect the live database, diff it against attribute-derived TableSchema, and apply a classified, guarded ALTER plan.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "attrecord",
+        "migrations",
+        "schema",
+        "ddl",
+        "diff",
+        "declarative",
+        "mysql",
+        "mariadb",
+        "postgresql",
+        "sqlite",
+        "php8"
+    ],
+    "homepage": "https://github.com/Nandan108/attrecord-migrations",
+    "authors": [
+        {
+            "name": "Samuel de Rougemont",
+            "email": "nandan108@gmail.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/Nandan108/attrecord-migrations/issues",
+        "source": "https://github.com/Nandan108/attrecord-migrations"
+    },
+    "require": {
+        "php": "^8.1",
+        "nandan108/attrecord": "dev-main"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.0",
+        "phpunit/phpunit": "^10.0",
+        "vimeo/psalm": "^6.0"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../attrecord",
+            "options": { "symlink": true }
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Nandan108\\AttrecordMigrations\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Nandan108\\AttrecordMigrations\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "cs-fix": "./vendor/bin/php-cs-fixer fix --allow-risky=yes --diff",
+        "cs-check": "./vendor/bin/php-cs-fixer fix --allow-risky=yes --diff --dry-run",
+        "psalm": "./vendor/bin/psalm",
+        "test": "./vendor/bin/phpunit -c phpunit.xml.dist",
+        "test-cover": "./vendor/bin/phpunit -c phpunit.xml.dist --coverage-text"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
