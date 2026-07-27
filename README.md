@@ -1,7 +1,10 @@
 # attrecord-migrations
 
 [![CI](https://github.com/Nandan108/attrecord-migrations/actions/workflows/ci.yml/badge.svg)](https://github.com/Nandan108/attrecord-migrations/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/Nandan108/attrecord-migrations)](LICENSE)
+[![Coverage](https://codecov.io/gh/nandan108/attrecord-migrations/branch/main/graph/badge.svg)](https://codecov.io/gh/nandan108/attrecord-migrations)
+[![Packagist Version](https://img.shields.io/packagist/v/nandan108/attrecord-migrations)](https://packagist.org/packages/nandan108/attrecord-migrations)
+[![PHP Version](https://img.shields.io/packagist/php-v/nandan108/attrecord-migrations)](https://packagist.org/packages/nandan108/attrecord-migrations)
+[![License](https://img.shields.io/packagist/l/nandan108/attrecord-migrations)](LICENSE)
 
 Declarative schema convergence for [attrecord](https://github.com/Nandan108/attrecord): the Record
 class **is** the schema, so evolution is *convergence* — introspect the live database, diff it
