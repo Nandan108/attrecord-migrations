@@ -12,6 +12,7 @@ use Nandan108\AttrecordMigrations\Diff\SchemaDiffer;
 use Nandan108\AttrecordMigrations\Ledger\SchemaRunRecord;
 use Nandan108\AttrecordMigrations\Ledger\SchemaStepRecord;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\Plan\DependencyOrder;
 use Nandan108\AttrecordMigrations\Plan\Plan;
 use Nandan108\AttrecordMigrations\Plan\PlannedChange;
 
@@ -53,6 +54,10 @@ final class SchemaMigrator
      */
     public function plan(array $recordClasses): Plan
     {
+        // Ordering is derived, not demanded of the caller: a table's FK targets must exist before
+        // it does, and the attributes already say which those are.
+        $recordClasses = DependencyOrder::sort($recordClasses);
+
         $changes = [];
         foreach ($recordClasses as $class) {
             $schema = TableSchema::fromClass($class);
@@ -162,7 +167,9 @@ final class SchemaMigrator
      */
     public function fingerprint(array $recordClasses): string
     {
-        return Fingerprint::of($this->connection->dialect, $recordClasses);
+        // Sorted first, so the fingerprint is a function of the model *set* — passing the same
+        // Records in a different order must not read as a schema change.
+        return Fingerprint::of($this->connection->dialect, DependencyOrder::sort($recordClasses));
     }
 
     /**
