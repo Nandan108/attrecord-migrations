@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format is based on
   `buildCreateTable(omitForeignKeys:)`) and the constraint is added after every create. Which edge
   is deferred is deterministic. On SQLite, which cannot add an FK to an existing table, the
   deferred constraint reports as `Manual` instead — pinned per backend by the test suite.
+- **`PartiallyDeclared`**: a Record may declare only part of its table. Implementing the interface
+  narrows the differ to what is declared — missing declared columns and indexes are still added
+  and declared ones still converge, but nothing live-but-undeclared is proposed for dropping. For
+  tables whose shape is partly computed at runtime (a column per registered dimension, a plugin's
+  extension columns), where the default "undeclared means drift" rule is actively wrong. Opt-in
+  per Record, because the trade-off runs one way: a genuinely stray column is not surfaced either.
 - **Ledger table names are configurable.** `SchemaRunRecord` / `SchemaStepRecord` are subclassable
   (`#[Table(name:)]` on the subclass, columns inherited) and `SchemaMigrator::__construct` accepts
   `runRecordClass` / `stepRecordClass`, so a host project can keep its ledger under its own naming

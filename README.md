@@ -113,6 +113,24 @@ Nothing to configure: the cycle is found in the declared graph, and which edge g
 out of the input order, so the same model set always resolves the same way. The deferred `ADD` is
 ordered after *every* create in the plan, because its target may be created later in the same run.
 
+## Tables you only partly declare
+
+Some tables have a shape that is partly *computed*: a registry that grows a column per registered
+dimension, an extension table a plugin writes into. There, "live but undeclared" is the normal
+state, not drift — and reporting it would either train the reader to ignore the drift report or,
+at a `Destructive` ceiling, delete live data.
+
+```php
+#[Table(name: 'app_slotspace')]
+final class SlotSpace extends Record implements PartiallyDeclared {}
+```
+
+The differ is then narrowed to what the Record declares: missing declared columns and indexes are
+still added, declared ones still converge, but nothing undeclared is ever proposed for dropping —
+columns, indexes and constraints alike. The trade-off is one-directional, which is why it is
+opt-in per Record: on such a table, a genuinely stray column from an old version is never
+surfaced either.
+
 ## Fingerprint fast path
 
 ```php
