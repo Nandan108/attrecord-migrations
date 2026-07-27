@@ -17,6 +17,23 @@ schemas and file-replacement deployments, prior art, and the non-goals fence).
 
 Backends: **MySQL/MariaDB, PostgreSQL, SQLite** — same tri-dialect matrix as attrecord itself.
 
+---
+
+## Installation
+
+```bash
+composer require nandan108/attrecord-migrations
+```
+
+Requires PHP 8.1+ and `nandan108/attrecord`. No other runtime dependencies.
+
+It is a **separate package by design**: attrecord's DDL producer is fresh-install only, and
+schema *evolution* carries risks (destructive ALTERs, live introspection, a safety model) that
+have no business being reachable from a library you pull in to write rows. Nothing here runs
+unless you call it.
+
+---
+
 ## Quick start
 
 ```php
@@ -110,12 +127,49 @@ schema, so a restored backup or hand-edited database simply re-plans correctly.
   plumbing and never proposed for dropping, even if the Records don't declare it. A genuinely
   operator-added index on exactly an FK's columns therefore survives — the fail-safe direction.
 
-## Development
+---
 
-Tri-backend Definition of Done, mirroring attrecord's: `composer test` must be green on
-MySQL/MariaDB + PostgreSQL + SQLite (a skipped backend is not a passing backend), psalm level 1
-clean, cs-fix applied. See `CLAUDE.md`. attrecord is consumed via a composer path repository in
-development.
+## Running tests
+
+```bash
+# Unit tests (no DB needed) — differ/classifier against hand-built live schemas
+composer test -- --testsuite unit
+
+# Integration tests. The MariaDB + PostgreSQL containers are attrecord's; SQLite needs no server.
+docker compose up -d          # in ../attrecord
+composer test -- --testsuite integration
+
+# All tests
+composer test
+
+# One backend only (the integration suites are tagged by @group)
+composer test -- --testsuite integration --group Mysql
+composer test -- --testsuite integration --group Pgsql
+composer test -- --testsuite integration --group Sqlite
+```
+
+Integration tests reuse attrecord's containers but their **own database**
+(`attrecord_migrations_test`, auto-created by the test support layer) — never attrecord's
+`attrecord_test`. Environment variables (defaults shown):
+
+```
+# MySQL / MariaDB
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=attrecord_migrations_test
+DB_USER=root
+DB_PASS=root
+
+# PostgreSQL
+PGSQL_HOST=127.0.0.1
+PGSQL_PORT=5432
+PGSQL_DB=attrecord_migrations_test
+PGSQL_USER=postgres
+PGSQL_PASS=postgres
+```
+
+An unreachable engine makes its suite **skip**, which locally is a convenience and in CI would be
+a lie — so CI runs with `--fail-on-skipped`. A skipped backend is not a passing backend.
 
 Two suites carry most of the weight, both against real engines:
 
@@ -128,3 +182,34 @@ Two suites carry most of the weight, both against real engines:
   re-plan EMPTY`. Each backend states its own expectations, so the drifts an engine *cannot see*
   (SQLite stores affinity, not width; enum members are MySQL-only) are pinned as explicitly empty
   rather than quietly untested.
+
+### Code style & static analysis
+
+Style is enforced with [PHP CS Fixer](https://cs.fixer.dev/) (the `@Symfony` ruleset plus project
+overrides in `.php-cs-fixer.php`), and types with [Psalm](https://psalm.dev/) at level 1:
+
+```bash
+composer cs-fix     # apply PHP CS Fixer
+composer cs-check   # report violations without changing files (used in CI)
+composer psalm      # static analysis — must be zero errors
+```
+
+All three run in CI against PHP 8.1–8.4 with MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14–17
+and SQLite. In development attrecord is consumed through a composer **path repository**
+(`../attrecord`), and CI reproduces that by checking out attrecord as a sibling directory — so
+every build tests against core's development head rather than a possibly stale release.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup
+and the checks to run. Behavioural design changes belong in the design contract
+([attrecord's `docs/arch-migrations.md`](https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md)),
+whose §7 is the non-goals fence.
+
+---
+
+## License
+
+[MIT](LICENSE) © Samuel de Rougemont
