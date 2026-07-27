@@ -23,7 +23,12 @@
                 <directory name="tests" />
             </errorLevel>
         </MissingOverrideAttribute>
-        <!-- Test properties are accessed by PHPUnit; Psalm cannot see the callers. -->
+        <!-- Test classes and properties are accessed by PHPUnit; Psalm cannot see the callers. -->
+        <UnusedClass>
+            <errorLevel type="suppress">
+                <directory name="tests" />
+            </errorLevel>
+        </UnusedClass>
         <PossiblyUnusedProperty>
             <errorLevel type="suppress">
                 <directory name="tests" />
