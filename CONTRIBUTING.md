@@ -13,11 +13,8 @@ makes the pipeline guess is not an improvement.** See "Safety" below.
 
 ## Getting started
 
-attrecord is consumed through a composer **path repository** (`../attrecord`), so clone the two
-side by side:
-
 ```bash
-git clone https://github.com/Nandan108/attrecord.git
+git clone https://github.com/Nandan108/attrecord.git          # for the test containers (below)
 git clone https://github.com/Nandan108/attrecord-migrations.git
 cd attrecord-migrations
 composer install
@@ -26,6 +23,22 @@ composer install
 The database containers are attrecord's (`docker compose up -d` in `../attrecord`); this package
 uses its own database on those servers, `attrecord_migrations_test`, created automatically by the
 test support layer.
+
+attrecord itself is a normal published dependency. If you need to work on core and this package at
+the same time — a new seam, or a change to how core renders DDL — point at your working copy
+temporarily, and revert with `git checkout` (`composer config --unset` leaves an empty
+`"repositories": {}` behind):
+
+```bash
+composer config repositories.attrecord path ../attrecord
+composer update nandan108/attrecord
+# ... then, before committing:
+git checkout -- composer.json && composer update nandan108/attrecord
+```
+
+A path repository must never be committed — it installs for nobody outside your machine, and the
+release workflow rejects it. Core changes land in attrecord, get released, and the constraint here
+is bumped.
 
 ## Running the checks
 

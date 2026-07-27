@@ -195,9 +195,7 @@ composer psalm      # static analysis — must be zero errors
 ```
 
 All three run in CI against PHP 8.1–8.4 with MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14–17
-and SQLite. In development attrecord is consumed through a composer **path repository**
-(`../attrecord`), and CI reproduces that by checking out attrecord as a sibling directory — so
-every build tests against core's development head rather than a possibly stale release.
+and SQLite — the same published attrecord release a consumer would get.
 
 ---
 

@@ -31,12 +31,24 @@ Done, same cross-dialect gotcha discipline, same release rules.
 
 ## Local dev
 
-attrecord is consumed via a composer **path repository** (`../attrecord`, symlinked) — changes to
-core are visible immediately; remember they must be committed/released in attrecord itself.
+attrecord is consumed as a **published dependency** (`^0.11`) — same as any consumer, and the only
+form that installs for anyone outside this working tree.
 
-CI reproduces that layout by checking out `Nandan108/attrecord` (ref `main`, overridable via the
-workflow's `ATTRECORD_REF`) as a sibling directory, so the path repository resolves and every build
-tests against core's development head rather than a possibly stale release.
+When you need to work on core and this package *together* (a new seam, or a DDL-rendering change),
+point at the working copy temporarily:
+
+```bash
+composer config repositories.attrecord path ../attrecord
+composer update nandan108/attrecord
+# ... then, before committing:
+git checkout -- composer.json && composer update nandan108/attrecord
+```
+
+Revert with `git checkout`, not `composer config --unset` — the unset leaves an empty
+`"repositories": {}` behind. (`composer.lock` is gitignored, as it should be for a library, so it
+is not part of the revert — the `composer update` re-resolves it.) **Never commit the path repository**: the release workflow rejects it
+(and a `dev-` constraint) outright, because that combination installs for nobody. A core change
+must be released in attrecord and the constraint bumped here.
 
 ## Commit & release
 
