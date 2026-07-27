@@ -55,18 +55,5 @@
     },
     "config": {
         "sort-packages": true
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true,
-    "repositories": {
-        "attrecord": {
-            "type": "path",
-            "url": "../attrecord",
-            "options": {
-                "versions": {
-                    "nandan108/attrecord": "0.12.0"
-                }
-            }
-        }
     }
 }

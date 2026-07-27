@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-27
+
+Everything here came out of dogfooding the pipeline against a real schema (InvFlux's, ~58 tables)
+rather than against fixtures. Two features the design had not anticipated, two bugs the test suite
+could not have produced, and one API change that fell out of both.
+
 ### Added
 
 - **Creation order is derived, not demanded.** `plan()` no longer expects FK-ordered input: the
@@ -91,3 +97,6 @@ expectations so undetectable drift is pinned as explicitly empty.
 
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
+
+[0.2.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Nandan108/attrecord-migrations/releases/tag/v0.1.0

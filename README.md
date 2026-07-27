@@ -25,7 +25,7 @@ Backends: **MySQL/MariaDB, PostgreSQL, SQLite** — same tri-dialect matrix as a
 composer require nandan108/attrecord-migrations
 ```
 
-Requires PHP 8.1+ and `nandan108/attrecord`. No other runtime dependencies.
+Requires PHP 8.1+ and `nandan108/attrecord` ^0.12. No other runtime dependencies.
 
 It is a **separate package by design**: attrecord's DDL producer is fresh-install only, and
 schema *evolution* carries risks (destructive ALTERs, live introspection, a safety model) that
@@ -179,7 +179,7 @@ final class MyRunRecord extends SchemaRunRecord {}
 $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
 ```
 
-## v0.1 limitations (all fail LOUD as `Manual`, never silently wrong)
+## Limitations (all fail LOUD as `Manual`, never silently wrong)
 
 - **SQLite**: no in-place column modification and no FK add/drop — those changes classify Manual
   (the table-rebuild dance is phase 2). `ADD COLUMN` with a non-constant default likewise. This
