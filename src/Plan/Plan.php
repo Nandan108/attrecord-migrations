@@ -15,6 +15,8 @@ final class Plan
     /** @param list<PlannedChange> $changes */
     public function __construct(
         public readonly array $changes,
+        /** Fingerprint of the desired model set this plan was computed from (see Fingerprint). */
+        public readonly string $fingerprint = '',
     ) {
     }
 

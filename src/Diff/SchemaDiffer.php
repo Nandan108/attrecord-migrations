@@ -175,6 +175,12 @@ final class SchemaDiffer
         }
         foreach (array_keys($live->indexes) as $name) {
             if (!isset($desiredIndexes[$name])) {
+                // MySQL implicitly creates a supporting index for every FK constraint (named after
+                // it) when none exists — that index is FK plumbing, not drift. Skip any live index
+                // whose name matches a live FK constraint.
+                if (isset($live->foreignKeys[$name])) {
+                    continue;
+                }
                 $changes[] = new PlannedChange(
                     $table,
                     'drop_index',

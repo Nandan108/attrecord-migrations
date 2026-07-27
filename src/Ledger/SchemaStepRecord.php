@@ -1,0 +1,30 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Nandan108\AttrecordMigrations\Ledger;
+
+use Nandan108\Attrecord\Attribute\Column;
+use Nandan108\Attrecord\Attribute\Table;
+use Nandan108\Attrecord\Enum\ColumnType;
+use Nandan108\Attrecord\Record;
+
+/**
+ * The run-once data-step ledger (arch-migrations.md §6.2): one row per executed step key. For
+ * these rows — and only these — the ledger **is** authoritative: a data-shape transform has no
+ * live schema state to introspect, so "has it run?" can only be answered here. Steps should still
+ * be written idempotently where the transform allows (a *partial* restore can desynchronize
+ * "ran" from "applied").
+ *
+ * @psalm-suppress PossiblyUnusedProperty Public forensic surface.
+ */
+#[Table(name: 'attrecord_schema_steps', primaryKey: 'step_key')]
+final class SchemaStepRecord extends Record
+{
+    /** Consumer-chosen, globally-ordered key, e.g. `2026-07-wrap-payload-json`. */
+    #[Column(ColumnType::VarChar, length: 191)]
+    public string $step_key = '';
+
+    #[Column(ColumnType::DateTime, precision: 6)]
+    public ?\DateTimeImmutable $applied_at = null;
+}
