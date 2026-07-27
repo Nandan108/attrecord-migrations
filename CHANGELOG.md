@@ -23,6 +23,16 @@ All notable changes to this project are documented here. The format is based on
   `runRecordClass` / `stepRecordClass`, so a host project can keep its ledger under its own naming
   instead of the generic `attrecord_schema_*`.
 
+### Fixed
+
+- **Generated columns no longer report phantom drift.** A freshly created table containing a
+  generated column re-planned non-empty forever: engines report such a column as nullable
+  regardless of its declaration, and store their own rewriting of the expression
+  (`(a IS NULL AND b IS NULL)` → `` `a` is null and `b` is null ``). Both facets are now skipped
+  when *both* sides are generated — every other facet still compares, and a column gaining or
+  losing generation is still drift. Found by dogfooding against a real schema; the golden
+  round-trip had no generated-column fixture.
+
 ### Changed
 
 - Requires `nandan108/attrecord: ^0.12` for the `omitForeignKeys` seam.

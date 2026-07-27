@@ -44,10 +44,28 @@ final class ColumnTuple
     /**
      * Name every facet on which two tuples differ — the classifier's input. Empty = identical.
      *
+     * Two facets are skipped when **both** sides are generated columns, because on a generated
+     * column the engine, not the declaration, owns them:
+     *
+     * - *nullability* — MySQL and MariaDB report a generated column as nullable unless it was
+     *   explicitly declared `NOT NULL`, whatever the declaration implied. Comparing it makes
+     *   every generated column read as permanently drifted the moment it is created.
+     * - *the expression itself* — engines store their own rewriting of what you wrote
+     *   (`(a IS NULL AND b IS NULL)` comes back as `` `a` is null and `b` is null ``), so a
+     *   textual comparison drifts against a table that is in fact exactly as declared.
+     *   {@see MysqlColumnNormalizer::looseExpr()} absorbs case, quoting and whitespace, but not
+     *   an engine that reassociates or re-spells the expression.
+     *
+     * The consequence — a *changed* generation expression is not detected — is the fail-safe
+     * direction and is documented as a limitation. A column gaining or losing generation
+     * entirely is still caught: only one side is generated then, so the facet is compared.
+     *
      * @return list<string>
      */
     public function diffFacets(self $other): array
     {
+        $bothGenerated = null !== $this->generated && null !== $other->generated;
+
         $facets = [];
         foreach ([
             'type'          => [$this->type, $other->type],
@@ -61,6 +79,9 @@ final class ColumnTuple
             'generated'     => [$this->generated, $other->generated],
             'members'       => [$this->members, $other->members],
         ] as $facet => [$a, $b]) {
+            if ($bothGenerated && ('nullable' === $facet || 'generated' === $facet)) {
+                continue;
+            }
             if ($a !== $b) {
                 $facets[] = $facet;
             }

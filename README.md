@@ -149,6 +149,11 @@ $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
   constraints, not modeled yet) — member drift is caught on MySQL, invisible elsewhere.
 - **MySQL-family `json`** folds to `longtext` (MariaDB stores JSON as LONGTEXT) — json↔longtext
   drift is undetectable there.
+- **Generated columns** are compared on every facet *except* nullability and the expression
+  itself — both of which the engine owns rather than the declaration (it reports them nullable
+  whatever you wrote, and stores its own spelling of the expression). Comparing either would make
+  a correct database report drift forever. The cost: a *changed* generation expression is not
+  detected. A column gaining or losing generation entirely still is.
 - `ON UPDATE CURRENT_TIMESTAMP` drift and PostgreSQL `BIT` round-trips are not compared.
 - Tables the Records don't declare are **invisible** — never dropped, never touched.
 - An index whose leading columns are a foreign key's columns is treated as that FK's supporting

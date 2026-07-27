@@ -8,6 +8,7 @@ use Nandan108\AttrecordMigrations\Introspect\MysqlIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Normalize\ColumnNormalizer;
 use Nandan108\AttrecordMigrations\Normalize\MysqlColumnNormalizer;
+use Nandan108\AttrecordMigrations\Tests\Fixtures\GeneratedColumnRecord;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\MysqlOnlyTypesRecord;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\GoldenRoundTripCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\IntrospectionCases;
@@ -23,6 +24,16 @@ final class IntrospectionMysqlTest extends MysqlIntegrationTestCase
     public function testMysqlOnlyTypesRoundTrip(): void
     {
         $this->assertRoundTrips([MysqlOnlyTypesRecord::class]);
+    }
+
+    /**
+     * Generated columns, whose nullability and stored expression the engine decides for itself.
+     * Round-tripping them is what keeps a correct database from reporting permanent phantom
+     * drift — see {@see GeneratedColumnRecord}.
+     */
+    public function testGeneratedColumnsRoundTrip(): void
+    {
+        $this->assertRoundTrips([GeneratedColumnRecord::class]);
     }
 
     protected function normalizer(): ColumnNormalizer

@@ -54,8 +54,7 @@ final class SchemaMigrator
 
     /**
      * Diff every Record class against the live database. Pure: executes no DDL, takes no lock.
-     * Pass classes in FK-dependency order (referenced tables first) — the same convention as any
-     * install path — so created tables exist before dependents reference them.
+     * Pass them in any order — creation order is derived from the declared foreign keys.
      *
      * @param list<class-string<Record>> $recordClasses
      */
