@@ -10,7 +10,6 @@ use Nandan108\Attrecord\Attribute\Table;
 use Nandan108\Attrecord\Enum\ColumnType;
 use Nandan108\Attrecord\Record;
 use Nandan108\Attrecord\Schema\TableSchema;
-use Nandan108\AttrecordMigrations\CircularDependencyException;
 use Nandan108\AttrecordMigrations\Plan\DependencyOrder;
 use PHPUnit\Framework\TestCase;
 
@@ -140,15 +139,23 @@ final class DependencyOrderTest extends TestCase
         self::assertSame([OrdChildRecord::class], DependencyOrder::sort([OrdChildRecord::class]));
     }
 
-    public function testMutualReferenceIsReportedAsTheActualCycle(): void
+    public function testMutualReferenceDefersOneEdgeInsteadOfFailing(): void
     {
-        try {
-            DependencyOrder::sort([OrdLoopARecord::class, OrdLoopBRecord::class]);
-            self::fail('expected CircularDependencyException');
-        } catch (CircularDependencyException $e) {
-            self::assertSame([OrdLoopARecord::class, OrdLoopBRecord::class], $e->cycle);
-            self::assertStringContainsString('Circular foreign-key dependency', $e->getMessage());
-            self::assertStringContainsString('add the constraint after both exist', $e->getMessage());
-        }
+        // No order satisfies a loop with both FKs inline, so one is deferred: B is created without
+        // its FK to A, A is created (its target now exists), then B's constraint is added.
+        $resolution = DependencyOrder::resolve([OrdLoopARecord::class, OrdLoopBRecord::class]);
+
+        self::assertSame([OrdLoopBRecord::class, OrdLoopARecord::class], $resolution->classes);
+        self::assertTrue($resolution->hasDeferred());
+        self::assertSame(['fk_loop_b_a_id'], $resolution->deferredFor(OrdLoopBRecord::class));
+        self::assertSame([], $resolution->deferredFor(OrdLoopARecord::class), 'only one edge of the loop is deferred');
+    }
+
+    public function testAcyclicSetDefersNothing(): void
+    {
+        $resolution = DependencyOrder::resolve([OrdGrandchildRecord::class, OrdChildRecord::class, OrdParentRecord::class]);
+
+        self::assertFalse($resolution->hasDeferred());
+        self::assertSame([], $resolution->deferredFor(OrdChildRecord::class));
     }
 }

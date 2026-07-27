@@ -16,10 +16,15 @@ use Nandan108\Attrecord\Record;
  * be written idempotently where the transform allows (a *partial* restore can desynchronize
  * "ran" from "applied").
  *
+ * Subclass it with your own `#[Table(name:)]` to place the ledger under a project-specific name,
+ * then pass the subclass to {@see \Nandan108\AttrecordMigrations\SchemaMigrator::__construct()}.
+ *
+ * @api
+ *
  * @psalm-suppress PossiblyUnusedProperty Public forensic surface.
  */
 #[Table(name: 'attrecord_schema_steps', primaryKey: 'step_key')]
-final class SchemaStepRecord extends Record
+class SchemaStepRecord extends Record
 {
     /** Consumer-chosen, globally-ordered key, e.g. `2026-07-wrap-payload-json`. */
     #[Column(ColumnType::VarChar, length: 191)]

@@ -6,8 +6,11 @@ namespace Nandan108\AttrecordMigrations\Tests\Integration;
 
 use Nandan108\Attrecord\Record;
 use Nandan108\Attrecord\Schema\TableSchema;
+use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
+use Nandan108\AttrecordMigrations\Introspect\SqliteIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\KitchenSinkRecord;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\EvolutionCases;
 use Nandan108\AttrecordMigrations\Tests\Support\SqliteIntegrationTestCase;
@@ -15,8 +18,14 @@ use Nandan108\AttrecordMigrations\Tests\Support\SqliteIntegrationTestCase;
 /** @group Sqlite */
 final class EvolutionSqliteTest extends SqliteIntegrationTestCase
 {
+    use CyclicSchemaCases;
     use DriftMatrixCases;
     use EvolutionCases;
+
+    protected function introspector(): SchemaIntrospector
+    {
+        return new SqliteIntrospector();
+    }
 
     /**
      * SQLite is the honest half of the matrix. Two things make it differ from the other engines,

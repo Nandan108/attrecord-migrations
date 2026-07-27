@@ -43,11 +43,11 @@ use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 $migrator = new SchemaMigrator($connection);      // an attrecord Connection
 
 // plan() is PURE: reads the catalog, executes nothing. Always safe to call.
-$plan = $migrator->plan([SupplierRecord::class, OrderRecord::class /* FK parents first */]);
+$plan = $migrator->plan([OrderRecord::class, SupplierRecord::class]);   // any order — see below
 
 $plan->isEmpty();                 // fast path — nothing to do
 foreach ($plan->changes as $c) {  // inspectable: SQL + classification + reason
-    printf("[%s] %s %s.%s — %s\n", $c->class->value, $c->kind, $c->table, $c->subject, $c->reason);v
+    printf("[%s] %s %s.%s — %s\n", $c->class->value, $c->kind, $c->table, $c->subject, $c->reason);
 }
 
 $migrator->apply($plan);                                   // Safe changes only (default)
@@ -97,6 +97,22 @@ At most once per database, recorded in the step ledger (`attrecord_schema_steps`
 the ledger is authoritative. There is no `down()`: on a file-replacement deployment model no code
 exists to run it at the right moment; roll forward or restore a backup.
 
+## Circular foreign keys
+
+Two tables that reference each other have **no** creation order that works while every FK is
+emitted inline — whichever goes first points at a table that does not exist yet. Rather than refuse
+the model, one edge of each loop is deferred:
+
+```
+CREATE TABLE b (…)                     -- without its FK to a
+CREATE TABLE a (… FOREIGN KEY → b)     -- b exists now
+ALTER TABLE b ADD CONSTRAINT … FOREIGN KEY → a
+```
+
+Nothing to configure: the cycle is found in the declared graph, and which edge gets deferred falls
+out of the input order, so the same model set always resolves the same way. The deferred `ADD` is
+ordered after *every* create in the plan, because its target may be created later in the same run.
+
 ## Fingerprint fast path
 
 ```php
@@ -113,10 +129,22 @@ Every `apply()` run is recorded in `attrecord_schema_runs` (statements + outcome
 **forensics only**. The differ never reads it: truth about the live schema comes from the live
 schema, so a restored backup or hand-edited database simply re-plans correctly.
 
+Both ledger tables can live under your own naming — subclass the Record with its own `#[Table]`
+and hand the subclass to the migrator:
+
+```php
+#[Table(name: 'myapp_schema_runs')]
+final class MyRunRecord extends SchemaRunRecord {}
+
+$migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
+```
+
 ## v0.1 limitations (all fail LOUD as `Manual`, never silently wrong)
 
 - **SQLite**: no in-place column modification and no FK add/drop — those changes classify Manual
-  (the table-rebuild dance is phase 2). `ADD COLUMN` with a non-constant default likewise.
+  (the table-rebuild dance is phase 2). `ADD COLUMN` with a non-constant default likewise. This
+  also means a **cyclic** schema only partly converges there: the tables are created, but the
+  deferred constraint (see "Circular foreign keys" above) cannot be added and is reported as Manual.
 - **Enum members** are only introspectable on MySQL-family (PG/SQLite store them in CHECK
   constraints, not modeled yet) — member drift is caught on MySQL, invisible elsewhere.
 - **MySQL-family `json`** folds to `longtext` (MariaDB stores JSON as LONGTEXT) — json↔longtext

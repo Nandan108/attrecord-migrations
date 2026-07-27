@@ -36,18 +36,34 @@ final class SchemaDiffer
     ) {
     }
 
-    /** @return list<PlannedChange> */
-    public function diffTable(TableSchema $desired, ?LiveTable $live): array
+    /**
+     * @param list<string> $omitForeignKeys constraint names deferred out of `CREATE TABLE` to break a
+     *                                      dependency cycle; each comes back as its own `add_foreign_key`
+     *                                      change, which the caller orders after every create
+     *
+     * @return list<PlannedChange>
+     */
+    public function diffTable(TableSchema $desired, ?LiveTable $live, array $omitForeignKeys = []): array
     {
         $table = $desired->tableName;
 
         if (null === $live) {
             $statements = array_values(array_filter(
-                explode(";\n", $this->dialect->buildCreateTable($desired)),
+                explode(";\n", $this->dialect->buildCreateTable($desired, omitForeignKeys: $omitForeignKeys)),
                 static fn (string $s): bool => '' !== trim($s),
             ));
 
-            return [new PlannedChange($table, 'create_table', '', ChangeClass::Safe, $statements, 'table does not exist')];
+            $changes = [new PlannedChange($table, 'create_table', '', ChangeClass::Safe, $statements, 'table does not exist')];
+
+            // Deferred constraints are the reason this table could be created at all: their targets
+            // are only guaranteed to exist once every create has run, so they are added separately.
+            foreach ($desired->foreignKeys as $fk) {
+                if (\in_array($fk->constraintName, $omitForeignKeys, true)) {
+                    $changes[] = $this->fkAdd($table, $fk->constraintName, $fk);
+                }
+            }
+
+            return $changes;
         }
 
         $changes = [];

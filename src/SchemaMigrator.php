@@ -39,8 +39,15 @@ final class SchemaMigrator
     private readonly SchemaDiffer $differ;
     private bool $ledgerInstalled = false;
 
-    public function __construct(private readonly Connection $connection)
-    {
+    /**
+     * @param class-string<SchemaRunRecord>  $runRecordClass  subclass the built-in Record with your own `#[Table(name:)]` to put the run ledger under your project's naming instead of the generic `attrecord_schema_runs`
+     * @param class-string<SchemaStepRecord> $stepRecordClass same, for the run-once step ledger
+     */
+    public function __construct(
+        private readonly Connection $connection,
+        private readonly string $runRecordClass = SchemaRunRecord::class,
+        private readonly string $stepRecordClass = SchemaStepRecord::class,
+    ) {
         $this->support = DialectSupport::for($connection->dialect);
         $this->differ = new SchemaDiffer($this->support->normalizer, $this->support->emitter, $connection->dialect);
     }
@@ -55,19 +62,28 @@ final class SchemaMigrator
     public function plan(array $recordClasses): Plan
     {
         // Ordering is derived, not demanded of the caller: a table's FK targets must exist before
-        // it does, and the attributes already say which those are.
-        $recordClasses = DependencyOrder::sort($recordClasses);
+        // it does, and the attributes already say which those are. A cycle has no such order, so
+        // one constraint per loop is deferred out of its CREATE and added at the end.
+        $resolution = DependencyOrder::resolve($recordClasses);
 
         $changes = [];
-        foreach ($recordClasses as $class) {
+        $deferredChanges = [];
+        foreach ($resolution->classes as $class) {
             $schema = TableSchema::fromClass($class);
+            $omit = $resolution->deferredFor($class);
             $live = $this->support->introspector->introspectTable($this->connection->session, $schema->tableName);
-            foreach ($this->differ->diffTable($schema, $live) as $change) {
+            foreach ($this->differ->diffTable($schema, $live, $omit) as $change) {
+                // A deferred constraint's target may be created later in this same plan, so its
+                // ADD has to trail every create rather than sit beside its own table's.
+                if (\in_array($change->subject, $omit, true) && \in_array($change->kind, ['add_foreign_key', 'manual'], true)) {
+                    $deferredChanges[] = $change;
+                    continue;
+                }
                 $changes[] = $change;
             }
         }
 
-        return new Plan($changes, Fingerprint::of($this->connection->dialect, $recordClasses));
+        return new Plan([...$changes, ...$deferredChanges], Fingerprint::of($this->connection->dialect, $resolution->classes));
     }
 
     /**
@@ -89,7 +105,8 @@ final class SchemaMigrator
         /** @var SchemaRunRecord */
         return $this->withLock(
             function () use ($plan, $allow): SchemaRunRecord {
-                $run = SchemaRunRecord::newWith([
+                $runClass = $this->runRecordClass;
+                $run = $runClass::newWith([
                     'fingerprint' => $plan->fingerprint,
                     'started_at'  => new \DateTimeImmutable(),
                 ]);
@@ -141,9 +158,10 @@ final class SchemaMigrator
         /** @var bool */
         return $this->withLock(
             function () use ($key, $step): bool {
+                $stepClass = $this->stepRecordClass;
                 $ran = Record::usingConnection(
                     $this->connection,
-                    static fn (): ?SchemaStepRecord => SchemaStepRecord::findOne('step_key = ?', [$key]),
+                    static fn (): ?SchemaStepRecord => $stepClass::findOne('step_key = ?', [$key]),
                 );
                 if (null !== $ran) {
                     return false;
@@ -151,7 +169,7 @@ final class SchemaMigrator
 
                 $step($this->connection->session);
 
-                $record = SchemaStepRecord::newWith(['step_key' => $key, 'applied_at' => new \DateTimeImmutable()]);
+                $record = $stepClass::newWith(['step_key' => $key, 'applied_at' => new \DateTimeImmutable()]);
                 Record::usingConnection($this->connection, static fn () => $record->save());
 
                 return true;
@@ -169,7 +187,7 @@ final class SchemaMigrator
     {
         // Sorted first, so the fingerprint is a function of the model *set* — passing the same
         // Records in a different order must not read as a schema change.
-        return Fingerprint::of($this->connection->dialect, DependencyOrder::sort($recordClasses));
+        return Fingerprint::of($this->connection->dialect, DependencyOrder::resolve($recordClasses)->classes);
     }
 
     /**
@@ -193,7 +211,7 @@ final class SchemaMigrator
         if ($this->ledgerInstalled) {
             return;
         }
-        foreach ([SchemaRunRecord::class, SchemaStepRecord::class] as $class) {
+        foreach ([$this->runRecordClass, $this->stepRecordClass] as $class) {
             $ddl = $this->connection->dialect->buildCreateTable(TableSchema::fromClass($class), ifNotExists: true);
             foreach (explode(";\n", $ddl) as $statement) {
                 if ('' !== trim($statement)) {

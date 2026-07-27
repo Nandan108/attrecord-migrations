@@ -7,6 +7,8 @@ namespace Nandan108\AttrecordMigrations\Tests\Integration\Cases;
 use Nandan108\Attrecord\Record;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\SchemaMigrator;
+use Nandan108\AttrecordMigrations\Tests\Fixtures\CustomRunRecord;
+use Nandan108\AttrecordMigrations\Tests\Fixtures\CustomStepRecord;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\KitchenSinkRecord;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\RefTargetRecord;
 
@@ -104,6 +106,26 @@ trait EvolutionCases
         // A different key runs independently.
         self::assertTrue($migrator->dataStep('2026-07-other-step', $step));
         self::assertSame(2, $ran());
+    }
+
+    public function testLedgerTablesFollowTheConfiguredRecordClasses(): void
+    {
+        // A host project usually wants the ledger under its own naming rather than the generic
+        // attrecord_schema_* — the mechanism is a subclass carrying its own #[Table(name:)].
+        $migrator = new SchemaMigrator(
+            Record::connection(),
+            runRecordClass: CustomRunRecord::class,
+            stepRecordClass: CustomStepRecord::class,
+        );
+        $migrator->apply($migrator->plan(self::$classes));
+        self::assertTrue($migrator->dataStep('custom-ledger-step', static function (): void {}));
+
+        // Written where configured...
+        self::assertSame(1, (int) static::$session->fetchScalar('SELECT COUNT(*) FROM mig_custom_runs'));
+        self::assertSame(1, (int) static::$session->fetchScalar('SELECT COUNT(*) FROM mig_custom_steps'));
+
+        // ...and the run-once guard still keys off that same table.
+        self::assertFalse($migrator->dataStep('custom-ledger-step', static function (): void {}));
     }
 
     public function testFailedStatementIsRecordedAndRethrown(): void

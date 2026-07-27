@@ -19,11 +19,16 @@ use Nandan108\Attrecord\Record;
  * Dogfood note: the migrations package uses attrecord itself for its ledger — DDL from this
  * Record, writes via `save()`, `statements_json` array-cast.
  *
+ * Subclass it with your own `#[Table(name:)]` to place the ledger under a project-specific name,
+ * then pass the subclass to {@see \Nandan108\AttrecordMigrations\SchemaMigrator::__construct()}.
+ *
+ * @api
+ *
  * @psalm-suppress PossiblyUnusedProperty Public forensic surface.
  */
 #[Table(name: 'attrecord_schema_runs')]
 #[Index('idx_started', columns: ['started_at'])]
-final class SchemaRunRecord extends Record
+class SchemaRunRecord extends Record
 {
     #[Column(ColumnType::BigIntUnsigned, autoIncrement: true)]
     public ?int $id = null;

@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Tests\Integration;
 
+use Nandan108\AttrecordMigrations\Introspect\PgsqlIntrospector;
+use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\EvolutionCases;
 use Nandan108\AttrecordMigrations\Tests\Support\PgsqlIntegrationTestCase;
@@ -12,8 +15,14 @@ use Nandan108\AttrecordMigrations\Tests\Support\PgsqlIntegrationTestCase;
 /** @group Pgsql */
 final class EvolutionPgsqlTest extends PgsqlIntegrationTestCase
 {
+    use CyclicSchemaCases;
     use DriftMatrixCases;
     use EvolutionCases;
+
+    protected function introspector(): SchemaIntrospector
+    {
+        return new PgsqlIntrospector();
+    }
 
     /**
      * PostgreSQL matches MySQL on every column facet, with granular `ALTER COLUMN` sub-clauses

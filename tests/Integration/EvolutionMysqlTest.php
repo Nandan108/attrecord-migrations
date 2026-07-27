@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Tests\Integration;
 
+use Nandan108\AttrecordMigrations\Introspect\MysqlIntrospector;
+use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\EvolutionCases;
 use Nandan108\AttrecordMigrations\Tests\Support\MysqlIntegrationTestCase;
@@ -12,8 +15,14 @@ use Nandan108\AttrecordMigrations\Tests\Support\MysqlIntegrationTestCase;
 /** @group Mysql */
 final class EvolutionMysqlTest extends MysqlIntegrationTestCase
 {
+    use CyclicSchemaCases;
     use DriftMatrixCases;
     use EvolutionCases;
+
+    protected function introspector(): SchemaIntrospector
+    {
+        return new MysqlIntrospector();
+    }
 
     /**
      * MySQL sees every drift the pipeline models — it is the richest of the three engines, so this
