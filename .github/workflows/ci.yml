@@ -1,0 +1,235 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call: # lets the Release workflow gate a tag on the full matrix passing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# This package is tested against attrecord's *development* head, not only its releases: it consumes
+# DDL-producer seams (buildColumnLine / buildForeignKeyLine / renderColumnType) whose rendering it
+# must match exactly, and a drift there is this package's bug to catch. So every job checks out
+# Nandan108/attrecord as a sibling directory, which the composer path repository in composer.json
+# (`../attrecord`) then resolves. Once a published attrecord constraint is in composer.json, the
+# sibling checkout keeps CI honest against main rather than silently testing a stale release.
+env:
+  ATTRECORD_REF: main
+
+jobs:
+  tests:
+    name: Tests (PHP ${{ matrix.php }} · ${{ matrix.mysql }} · ${{ matrix.pgsql }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Diagonal matrix: 4 jobs that exercise every PHP version and every DB engine/version
+      # at least once (PHP 8.1-8.4, MySQL 8.0/8.4, MariaDB 10.11/11.4, PostgreSQL 14-17).
+      # Engine spread is not incidental here — the normalizers exist because these engines
+      # *report* the same schema differently (display widths, quoted defaults, JSON-as-LONGTEXT).
+      matrix:
+        include:
+          - { php: '8.1', mysql: 'mysql:8.0',     pgsql: 'postgres:14' }
+          - { php: '8.2', mysql: 'mysql:8.4',     pgsql: 'postgres:15' }
+          - { php: '8.3', mysql: 'mariadb:10.11', pgsql: 'postgres:16' }
+          - { php: '8.4', mysql: 'mariadb:11.4',  pgsql: 'postgres:17' }
+
+    services:
+      # No container health checks: there is no single client-binary health command that works
+      # across mysql:8.x AND mariadb 10.11/11.4 (the mysql* client symlinks are being phased out
+      # in MariaDB 11.x). Readiness is polled from the job via PDO instead — see "Wait for
+      # databases". The MariaDB images accept the legacy MYSQL_* env vars, so one block serves all.
+      db_mysql:
+        image: ${{ matrix.mysql }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: attrecord_migrations_test
+        ports:
+          - 3306:3306
+      db_pgsql:
+        image: ${{ matrix.pgsql }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: attrecord_migrations_test
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: attrecord-migrations
+
+      - name: Check out attrecord (resolved by the composer path repository)
+        uses: actions/checkout@v4
+        with:
+          repository: Nandan108/attrecord
+          ref: ${{ env.ATTRECORD_REF }}
+          path: attrecord
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_mysql, pdo_pgsql, pdo_sqlite, mysqli, mbstring
+          coverage: none
+
+      - name: Install dependencies
+        working-directory: attrecord-migrations
+        run: composer update --prefer-dist --no-progress --no-interaction
+
+      - name: Wait for databases
+        run: |
+          php -r '
+            $deadline = time() + 90;
+            $wait = function (string $dsn, string $user, string $pass, string $label) use ($deadline): void {
+              while (true) {
+                try { new PDO($dsn, $user, $pass); echo "$label ready\n"; return; }
+                catch (\Throwable $e) {
+                  if (time() >= $deadline) { fwrite(STDERR, "$label not ready: {$e->getMessage()}\n"); exit(1); }
+                  usleep(500000);
+                }
+              }
+            };
+            $wait("mysql:host=127.0.0.1;port=3306", "root", "root", "MySQL");
+            $wait("pgsql:host=127.0.0.1;port=5432;dbname=attrecord_migrations_test", "postgres", "postgres", "PostgreSQL");
+          '
+
+      # --fail-on-skipped enforces the tri-backend Definition of Done in the one place it can be
+      # enforced: the integration cases skip themselves when an engine is unreachable, so without
+      # this flag a database that failed to start would report green on a suite that never ran.
+      # "A skipped backend is not a passing backend" is a build failure, not a note in the log.
+      - name: Run test suite (MySQL + PostgreSQL + SQLite)
+        working-directory: attrecord-migrations
+        run: ./vendor/bin/phpunit -c phpunit.xml.dist --fail-on-skipped
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: attrecord_migrations_test
+          DB_USER: root
+          DB_PASS: root
+          PGSQL_HOST: 127.0.0.1
+          PGSQL_PORT: 5432
+          PGSQL_DB: attrecord_migrations_test
+          PGSQL_USER: postgres
+          PGSQL_PASS: postgres
+
+  static:
+    name: Static analysis & code style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: attrecord-migrations
+
+      - name: Check out attrecord (resolved by the composer path repository)
+        uses: actions/checkout@v4
+        with:
+          repository: Nandan108/attrecord
+          ref: ${{ env.ATTRECORD_REF }}
+          path: attrecord
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        working-directory: attrecord-migrations
+        run: composer update --prefer-dist --no-progress --no-interaction
+
+      - name: Psalm
+        working-directory: attrecord-migrations
+        run: composer psalm
+
+      - name: PHP CS Fixer (dry-run)
+        working-directory: attrecord-migrations
+        run: composer cs-check
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+
+    services:
+      db_mysql:
+        image: mariadb:11.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: attrecord_migrations_test
+        ports:
+          - 3306:3306
+      db_pgsql:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: attrecord_migrations_test
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: attrecord-migrations
+
+      - name: Check out attrecord (resolved by the composer path repository)
+        uses: actions/checkout@v4
+        with:
+          repository: Nandan108/attrecord
+          ref: ${{ env.ATTRECORD_REF }}
+          path: attrecord
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_mysql, pdo_pgsql, pdo_sqlite, mysqli, mbstring
+          coverage: pcov
+
+      - name: Install dependencies
+        working-directory: attrecord-migrations
+        run: composer update --prefer-dist --no-progress --no-interaction
+
+      - name: Wait for databases
+        run: |
+          php -r '
+            $deadline = time() + 90;
+            $wait = function (string $dsn, string $user, string $pass, string $label) use ($deadline): void {
+              while (true) {
+                try { new PDO($dsn, $user, $pass); echo "$label ready\n"; return; }
+                catch (\Throwable $e) {
+                  if (time() >= $deadline) { fwrite(STDERR, "$label not ready: {$e->getMessage()}\n"); exit(1); }
+                  usleep(500000);
+                }
+              }
+            };
+            $wait("mysql:host=127.0.0.1;port=3306", "root", "root", "MySQL");
+            $wait("pgsql:host=127.0.0.1;port=5432;dbname=attrecord_migrations_test", "postgres", "postgres", "PostgreSQL");
+          '
+
+      - name: Run tests with coverage
+        working-directory: attrecord-migrations
+        run: ./vendor/bin/phpunit -c phpunit.xml.dist --fail-on-skipped --coverage-clover coverage/clover.xml
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: attrecord_migrations_test
+          DB_USER: root
+          DB_PASS: root
+          PGSQL_HOST: 127.0.0.1
+          PGSQL_PORT: 5432
+          PGSQL_DB: attrecord_migrations_test
+          PGSQL_USER: postgres
+          PGSQL_PASS: postgres
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: attrecord-migrations/coverage/clover.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

@@ -33,3 +33,26 @@ Done, same cross-dialect gotcha discipline, same release rules.
 
 attrecord is consumed via a composer **path repository** (`../attrecord`, symlinked) — changes to
 core are visible immediately; remember they must be committed/released in attrecord itself.
+
+CI reproduces that layout by checking out `Nandan108/attrecord` (ref `main`, overridable via the
+workflow's `ATTRECORD_REF`) as a sibling directory, so the path repository resolves and every build
+tests against core's development head rather than a possibly stale release.
+
+## Commit & release
+
+- Detailed, conventional commits. Breaking changes get a `!` and a **Breaking** note in the CHANGELOG.
+- **Releases are CI-gated — do NOT hand-create `vX.Y.Z` tags.** Packagist publishes on tag existence,
+  so the tag must be a *product* of green CI, not a precondition. Flow: promote the CHANGELOG section →
+  push the release commit to `main` → run the **Release** workflow (Actions → Release → Run workflow →
+  `version: X.Y.Z`). It re-runs the full matrix and only then creates the annotated tag + GitHub
+  release, so a red build never reaches Packagist.
+- **The release gate refuses a path-repository release.** `../attrecord` is a development
+  convenience that cannot resolve for anyone installing from Packagist, so the workflow fails if
+  `composer.json` still declares it or still requires a `dev-` constraint of `nandan108/attrecord`.
+  Publishing therefore has a hard prerequisite: **attrecord must be released first** with the
+  schema-evolution seams, and the constraint pointed at it.
+- **`v*` tag ruleset** + **`RELEASE_TOKEN`**: replicate attrecord's setup — a ruleset restricting
+  `v*` tag creation to the admin bypass, and a fine-grained PAT (**Contents: read & write** +
+  **Metadata: read**, on this repo) stored as the `RELEASE_TOKEN` secret. `GITHUB_TOKEN` is not a
+  bypass actor, so without that secret the workflow fails at the tag push — deliberately, with an
+  explanatory error.

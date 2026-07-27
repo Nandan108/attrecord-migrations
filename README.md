@@ -1,5 +1,8 @@
 # attrecord-migrations
 
+[![CI](https://github.com/Nandan108/attrecord-migrations/actions/workflows/ci.yml/badge.svg)](https://github.com/Nandan108/attrecord-migrations/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Nandan108/attrecord-migrations)](LICENSE)
+
 Declarative schema convergence for [attrecord](https://github.com/Nandan108/attrecord): the Record
 class **is** the schema, so evolution is *convergence* — introspect the live database, diff it
 against the attribute-derived `TableSchema`, and apply a classified, guarded `ALTER` plan. No
@@ -24,7 +27,7 @@ $plan = $migrator->plan([SupplierRecord::class, OrderRecord::class /* FK parents
 
 $plan->isEmpty();                 // fast path — nothing to do
 foreach ($plan->changes as $c) {  // inspectable: SQL + classification + reason
-    printf("[%s] %s %s.%s — %s\n", $c->class->value, $c->kind, $c->table, $c->subject, $c->reason);
+    printf("[%s] %s %s.%s — %s\n", $c->class->value, $c->kind, $c->table, $c->subject, $c->reason);v
 }
 
 $migrator->apply($plan);                                   // Safe changes only (default)
