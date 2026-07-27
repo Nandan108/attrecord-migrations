@@ -31,6 +31,14 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **A numerically-named constraint no longer makes a table uninspectable.** PHP coerces a
+  numeric-string array key to `int`, so a constraint or index named `1` — which is how MariaDB
+  names an unnamed `FOREIGN KEY` — came back out of the introspector's accumulators as an int and
+  hit a string-typed constructor: `TypeError`, on a table that was in no way malformed. Any
+  pre-existing table with a hand-written unnamed FK was affected. The key types are now declared
+  `array-key` (which is what PHP actually guarantees) rather than `string`, and re-cast at each
+  point of use; correcting the annotation is what let Psalm find the four further places the same
+  coercion reached. Found by running against a real WordPress database.
 - **Generated columns no longer report phantom drift.** A freshly created table containing a
   generated column re-planned non-empty forever: engines report such a column as nullable
   regardless of its declaration, and store their own rewriting of the expression

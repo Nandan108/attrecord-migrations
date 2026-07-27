@@ -95,9 +95,9 @@ final class SchemaDifferTest extends TestCase
     /**
      * A LiveTable matching DiffBaseRecord exactly (MySQL vocabulary), with overridable parts.
      *
-     * @param array<string, LiveColumn>|null     $columns
-     * @param array<string, LiveIndex>|null      $indexes
-     * @param array<string, LiveForeignKey>|null $fks
+     * @param array<array-key, LiveColumn>|null     $columns
+     * @param array<array-key, LiveIndex>|null      $indexes
+     * @param array<array-key, LiveForeignKey>|null $fks
      */
     private static function liveBase(?array $columns = null, ?array $indexes = null, ?array $fks = null): LiveTable
     {

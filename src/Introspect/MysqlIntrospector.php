@@ -63,7 +63,7 @@ final class MysqlIntrospector implements SchemaIntrospector
             [$tableName],
         );
         $primaryKey = [];
-        /** @var array<string, array{columns: list<string>, unique: bool}> $indexAcc */
+        /** @var array<array-key, array{columns: list<string>, unique: bool}> $indexAcc */
         $indexAcc = [];
         foreach ($indexRows as $row) {
             $ixName = (string) $row['INDEX_NAME'];
@@ -77,6 +77,10 @@ final class MysqlIntrospector implements SchemaIntrospector
         }
         $indexes = [];
         foreach ($indexAcc as $ixName => $acc) {
+            // Re-cast: PHP silently converts a numeric-string array key to int on assignment, so
+            // the (string) applied when accumulating is gone by the time we read it back. Engines
+            // do produce such names — see the foreign-key loop below.
+            $ixName = (string) $ixName;
             $indexes[$ixName] = new LiveIndex($ixName, $acc['columns'], $acc['unique']);
         }
 
@@ -93,7 +97,7 @@ final class MysqlIntrospector implements SchemaIntrospector
              ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION',
             [$tableName],
         );
-        /** @var array<string, array{local: list<string>, refTable: string, refCols: list<string>, del: string, upd: string}> $fkAcc */
+        /** @var array<array-key, array{local: list<string>, refTable: string, refCols: list<string>, del: string, upd: string}> $fkAcc */
         $fkAcc = [];
         foreach ($fkRows as $row) {
             $fkName = (string) $row['CONSTRAINT_NAME'];
@@ -109,6 +113,11 @@ final class MysqlIntrospector implements SchemaIntrospector
         }
         $foreignKeys = [];
         foreach ($fkAcc as $fkName => $acc) {
+            // MariaDB names an unnamed FK constraint with a bare ordinal — `1`, `2`, … — and PHP
+            // turns a numeric-string array key into an int, so `$fkName` arrives here as an int
+            // however carefully it was cast on the way in. Left uncast it is a TypeError, which is
+            // to say: any table with an unnamed foreign key was uninspectable.
+            $fkName = (string) $fkName;
             $foreignKeys[$fkName] = new LiveForeignKey(
                 name: $fkName,
                 localColumns: $acc['local'],

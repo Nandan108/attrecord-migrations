@@ -80,7 +80,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
             [$tableName],
         );
         $primaryKey = [];
-        /** @var array<string, list<string>> $uniqueAcc */
+        /** @var array<array-key, list<string>> $uniqueAcc */
         $uniqueAcc = [];
         foreach ($constraintRows as $row) {
             if ('PRIMARY KEY' === (string) $row['constraint_type']) {
@@ -91,6 +91,9 @@ final class PgsqlIntrospector implements SchemaIntrospector
         }
         $indexes = [];
         foreach ($uniqueAcc as $ixName => $cols) {
+            // Re-cast: PHP turns a numeric-string array key into an int on assignment, so the
+            // (string) applied when accumulating is gone by the time it is read back.
+            $ixName = (string) $ixName;
             $indexes[$ixName] = new LiveIndex($ixName, $cols, true);
         }
 
@@ -108,7 +111,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
              ORDER BY i.relname, pos',
             [$tableName],
         );
-        /** @var array<string, array{columns: list<string>, unique: bool}> $indexAcc */
+        /** @var array<array-key, array{columns: list<string>, unique: bool}> $indexAcc */
         $indexAcc = [];
         foreach ($indexRows as $row) {
             $ixName = (string) $row['index_name'];
@@ -119,6 +122,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
             $indexAcc[$ixName]['columns'][] = (string) $row['column_name'];
         }
         foreach ($indexAcc as $ixName => $acc) {
+            $ixName = (string) $ixName; // numeric-string array key -> int; see above
             $indexes[$ixName] = new LiveIndex($ixName, $acc['columns'], $acc['unique']);
         }
 
@@ -138,7 +142,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
              ORDER BY tc.constraint_name, kcu.ordinal_position",
             [$tableName],
         );
-        /** @var array<string, array{local: list<string>, refTable: string, refCols: list<string>, del: string, upd: string}> $fkAcc */
+        /** @var array<array-key, array{local: list<string>, refTable: string, refCols: list<string>, del: string, upd: string}> $fkAcc */
         $fkAcc = [];
         foreach ($fkRows as $row) {
             $fkName = (string) $row['constraint_name'];
@@ -154,6 +158,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
         }
         $foreignKeys = [];
         foreach ($fkAcc as $fkName => $acc) {
+            $fkName = (string) $fkName; // numeric-string array key -> int; see above
             $foreignKeys[$fkName] = new LiveForeignKey(
                 name: $fkName,
                 localColumns: $acc['local'],

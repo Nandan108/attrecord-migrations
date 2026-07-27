@@ -130,6 +130,7 @@ final class SchemaDiffer
         }
 
         foreach (array_keys($live->columns) as $colName) {
+            $colName = (string) $colName; // numeric-string array key -> int; see above
             if ($partiallyDeclared) {
                 break; // the undeclared columns belong to someone else — see PartiallyDeclared
             }
@@ -147,6 +148,9 @@ final class SchemaDiffer
         }
 
         // --- Unique keys + indexes (compared by name, then by shape). ---
+        // array-key, not string: a numerically-named index (`#[Index('1', …)]`, or an engine's own
+        // ordinal naming on the live side) becomes an int the moment it is used as an array key.
+        /** @var array<array-key, array{columns: list<string>, unique: bool}> $desiredIndexes */
         $desiredIndexes = [];
         foreach ($desired->uniqueKeys as $name => $cols) {
             $desiredIndexes[$name] = ['columns' => $cols, 'unique' => true];
@@ -156,6 +160,9 @@ final class SchemaDiffer
         }
 
         foreach ($desiredIndexes as $name => $spec) {
+            // A declared name that looks numeric arrives as an int (PHP array-key coercion), and
+            // every emitter below is typed for a string.
+            $name = (string) $name;
             $liveIx = $live->indexes[$name] ?? null;
             if (null === $liveIx) {
                 $changes[] = new PlannedChange(
@@ -196,6 +203,7 @@ final class SchemaDiffer
             }
         }
         foreach (array_keys($live->indexes) as $name) {
+            $name = (string) $name; // numeric-string array key -> int; see above
             if ($partiallyDeclared) {
                 break; // see PartiallyDeclared — a computed column brings its own index
             }
@@ -217,11 +225,13 @@ final class SchemaDiffer
         }
 
         // --- Foreign keys (by constraint name). ---
+        /** @var array<array-key, ForeignKeyDefinition> $desiredFks — array-key: see above */
         $desiredFks = [];
         foreach ($desired->foreignKeys as $fk) {
             $desiredFks[$fk->constraintName] = $fk;
         }
         foreach ($desiredFks as $name => $fk) {
+            $name = (string) $name; // numeric-string array key -> int; see above
             $liveFk = $live->foreignKeys[$name] ?? null;
             $shape = [[$fk->localColumn], $fk->targetTableName(), [$fk->targetColumnName()], $fk->onDelete->value, $fk->onUpdate->value];
             if (null === $liveFk) {
@@ -240,6 +250,7 @@ final class SchemaDiffer
             }
         }
         foreach (array_keys($live->foreignKeys) as $name) {
+            $name = (string) $name; // numeric-string array key -> int; see above
             if ($partiallyDeclared) {
                 break; // see PartiallyDeclared
             }
