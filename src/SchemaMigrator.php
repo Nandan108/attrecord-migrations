@@ -71,7 +71,8 @@ final class SchemaMigrator
             $schema = TableSchema::fromClass($class);
             $omit = $resolution->deferredFor($class);
             $live = $this->support->introspector->introspectTable($this->connection->session, $schema->tableName);
-            foreach ($this->differ->diffTable($schema, $live, $omit) as $change) {
+            $partial = is_a($class, PartiallyDeclared::class, true);
+            foreach ($this->differ->diffTable($schema, $live, $omit, $partial) as $change) {
                 // A deferred constraint's target may be created later in this same plan, so its
                 // ADD has to trail every create rather than sit beside its own table's.
                 if (\in_array($change->subject, $omit, true) && \in_array($change->kind, ['add_foreign_key', 'manual'], true)) {

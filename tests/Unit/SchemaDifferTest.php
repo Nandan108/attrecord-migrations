@@ -369,4 +369,75 @@ final class SchemaDifferTest extends TestCase
         $manual = self::only($differ->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live), 'manual');
         self::assertStringContainsString('cannot add an FK in place', $manual->reason);
     }
+
+    /**
+     * A live table carrying a column, an index and a constraint the Record does not declare —
+     * the shape of any table whose columns are partly computed at runtime.
+     */
+    private static function liveWithUndeclaredExtras(bool $withQty = true): LiveTable
+    {
+        $columns = [
+            'id'     => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
+            'sku'    => new LiveColumn('sku', 'varchar(64)', false, 'NULL', false),
+            'name'   => new LiveColumn('name', 'varchar(191)', false, 'NULL', false),
+            'qty'    => new LiveColumn('qty', 'smallint(5) unsigned', false, '0', false),
+            'ref_id' => new LiveColumn('ref_id', 'bigint(20) unsigned', true, 'NULL', false),
+            // The runtime-added column, and below it the index and constraint that came with it.
+            'dim_loc' => new LiveColumn('dim_loc', 'varchar(64)', false, '', false),
+        ];
+        if (!$withQty) {
+            unset($columns['qty']);
+        }
+
+        return self::liveBase(
+            columns: $columns,
+            indexes: [
+                'uniq_sku' => new LiveIndex('uniq_sku', ['sku'], true),
+                'idx_name' => new LiveIndex('idx_name', ['name'], false),
+                // Deliberately NOT led by an FK column: an index whose leading columns are a
+                // foreign key's is recognised as that FK's supporting plumbing and is never
+                // proposed for dropping anyway, which would prove nothing here.
+                'idx_extra' => new LiveIndex('idx_extra', ['name', 'dim_loc'], false),
+            ],
+            fks: [
+                'fk_t_ref_id' => new LiveForeignKey('fk_t_ref_id', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+                'fk_t_extra'  => new LiveForeignKey('fk_t_extra', ['dim_loc'], 'diff_dim', ['code'], 'RESTRICT', 'RESTRICT'),
+            ],
+        );
+    }
+
+    public function testUndeclaredExtrasAreDroppedByDefault(): void
+    {
+        // The baseline this opt-in departs from: on an ordinary table, live-but-undeclared means
+        // someone changed the database behind the schema's back, and it is reported.
+        $changes = self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveWithUndeclaredExtras());
+
+        self::assertSame('dim_loc', self::only($changes, 'drop_column')->subject);
+        self::assertSame('idx_extra', self::only($changes, 'drop_index')->subject);
+        self::assertSame('fk_t_extra', self::only($changes, 'drop_foreign_key')->subject);
+    }
+
+    public function testPartiallyDeclaredTableKeepsEverythingItDoesNotDeclare(): void
+    {
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffBaseRecord::class),
+            self::liveWithUndeclaredExtras(),
+            partiallyDeclared: true,
+        );
+
+        self::assertSame([], $changes, 'nothing undeclared may be proposed for dropping');
+    }
+
+    public function testPartiallyDeclaredStillConvergesWhatItDoesDeclare(): void
+    {
+        // The opt-out is about *ownership*, not about giving up: a declared column that is
+        // missing is still added, on the very same table.
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffBaseRecord::class),
+            self::liveWithUndeclaredExtras(withQty: false),
+            partiallyDeclared: true,
+        );
+
+        self::assertSame('qty', self::only($changes, 'add_column')->subject);
+    }
 }

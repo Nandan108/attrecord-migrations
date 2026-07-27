@@ -37,13 +37,16 @@ final class SchemaDiffer
     }
 
     /**
-     * @param list<string> $omitForeignKeys constraint names deferred out of `CREATE TABLE` to break a
-     *                                      dependency cycle; each comes back as its own `add_foreign_key`
-     *                                      change, which the caller orders after every create
+     * @param list<string> $omitForeignKeys   constraint names deferred out of `CREATE TABLE` to break a
+     *                                        dependency cycle; each comes back as its own `add_foreign_key`
+     *                                        change, which the caller orders after every create
+     * @param bool         $partiallyDeclared when true, nothing live-but-undeclared is proposed for
+     *                                        dropping — the table's shape is only partly described by
+     *                                        this schema. See {@see \Nandan108\AttrecordMigrations\PartiallyDeclared}
      *
      * @return list<PlannedChange>
      */
-    public function diffTable(TableSchema $desired, ?LiveTable $live, array $omitForeignKeys = []): array
+    public function diffTable(TableSchema $desired, ?LiveTable $live, array $omitForeignKeys = [], bool $partiallyDeclared = false): array
     {
         $table = $desired->tableName;
 
@@ -127,6 +130,9 @@ final class SchemaDiffer
         }
 
         foreach (array_keys($live->columns) as $colName) {
+            if ($partiallyDeclared) {
+                break; // the undeclared columns belong to someone else — see PartiallyDeclared
+            }
             if (!isset($desired->columns[$colName]) && !isset($liveColumnsClaimed[$colName])) {
                 $statements = $this->emitter->dropColumn($table, $colName);
                 $changes[] = new PlannedChange(
@@ -190,6 +196,9 @@ final class SchemaDiffer
             }
         }
         foreach (array_keys($live->indexes) as $name) {
+            if ($partiallyDeclared) {
+                break; // see PartiallyDeclared — a computed column brings its own index
+            }
             if (!isset($desiredIndexes[$name])) {
                 // MySQL implicitly creates a supporting index for every FK constraint (named after
                 // it) when none exists — that index is FK plumbing, not drift.
@@ -231,6 +240,9 @@ final class SchemaDiffer
             }
         }
         foreach (array_keys($live->foreignKeys) as $name) {
+            if ($partiallyDeclared) {
+                break; // see PartiallyDeclared
+            }
             if (!isset($desiredFks[$name])) {
                 $drop = $this->emitter->dropForeignKey($table, $name);
                 if (null === $drop) {
