@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Tests\Integration\Cases;
 
+use Nandan108\Attrecord\Enum\ColumnType;
 use Nandan108\Attrecord\Record;
+use Nandan108\Attrecord\Schema\ColumnDefinition;
+use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\SchemaMigrator;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\CustomRunRecord;
@@ -159,5 +162,66 @@ trait EvolutionCases
         );
         self::assertNotNull($lastRun, 'failed run is recorded');
         self::assertStringContainsString('sku', (string) $lastRun->error);
+    }
+
+    /**
+     * A schema carrying columns no class declares converges like any other, and re-plans empty.
+     *
+     * This is the whole point of accepting a `TableSchema`: a table whose shape depends on runtime
+     * data used to be maintained by hand-written `ALTER`s that the differ could not see. Described,
+     * those columns are created, converged and diffed — including being *added* to an existing
+     * table when the runtime set grows, which is the second half below.
+     */
+    public function testABuiltSchemaConvergesAndRePlansEmpty(): void
+    {
+        $migrator = $this->migrator();
+
+        $withOne = TableSchema::fromClass(KitchenSinkRecord::class)->extendedWith(
+            columns: ['dim_loc' => self::runtimeColumn('dim_loc')],
+            indexes: ['idx_dim_loc' => ['dim_loc']],
+        );
+        $models = [RefTargetRecord::class, $withOne];
+
+        $migrator->apply($migrator->plan($models));
+        self::assertTrue($migrator->plan($models)->isEmpty(), 'a built schema must satisfy the golden invariant too');
+
+        // The runtime set grows by one — the new column is a plain Safe add on the existing table.
+        $withTwo = TableSchema::fromClass(KitchenSinkRecord::class)->extendedWith(
+            columns: [
+                'dim_loc' => self::runtimeColumn('dim_loc'),
+                'dim_stt' => self::runtimeColumn('dim_stt'),
+            ],
+            indexes: ['idx_dim_loc' => ['dim_loc'], 'idx_dim_stt' => ['dim_stt']],
+        );
+        $grown = [RefTargetRecord::class, $withTwo];
+
+        $plan = $migrator->plan($grown);
+        self::assertFalse($plan->hasBeyondSafe(), 'growing the runtime set must stay Safe');
+        self::assertContains('dim_stt', array_map(
+            static fn (\Nandan108\AttrecordMigrations\Plan\PlannedChange $c): string => $c->subject,
+            $plan->changes,
+        ));
+
+        $migrator->apply($plan);
+        self::assertTrue($migrator->plan($grown)->isEmpty());
+
+        // And the fingerprint tracks the runtime set, so a consumer's fast path notices the growth.
+        self::assertNotSame($migrator->fingerprint($models), $migrator->fingerprint($grown));
+    }
+
+    private static function runtimeColumn(string $name): ColumnDefinition
+    {
+        return new ColumnDefinition(
+            name: $name,
+            propertyName: $name,
+            type: ColumnType::VarChar,
+            nullable: false,
+            autoIncrement: false,
+            trimOnSave: null,
+            length: 64,
+            precision: null,
+            scale: null,
+            default: '',
+        );
     }
 }

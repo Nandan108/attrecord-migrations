@@ -9,6 +9,7 @@ use Nandan108\Attrecord\Attribute\ForeignKey;
 use Nandan108\Attrecord\Attribute\Table;
 use Nandan108\Attrecord\Enum\ColumnType;
 use Nandan108\Attrecord\Record;
+use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\AttrecordMigrations\Plan\DependencyOrder;
 use PHPUnit\Framework\TestCase;
@@ -139,23 +140,67 @@ final class DependencyOrderTest extends TestCase
         self::assertSame([OrdChildRecord::class], DependencyOrder::sort([OrdChildRecord::class]));
     }
 
+    /**
+     * @param list<class-string<Record>> $classes
+     *
+     * @return list<TableSchema>
+     */
+    private static function schemas(array $classes): array
+    {
+        return array_map(static fn (string $c): TableSchema => TableSchema::fromClass($c), $classes);
+    }
+
+    /** @param list<TableSchema> $schemas */
+    private static function tableNames(array $schemas): array
+    {
+        return array_map(static fn (TableSchema $s): string => $s->tableName, $schemas);
+    }
+
     public function testMutualReferenceDefersOneEdgeInsteadOfFailing(): void
     {
         // No order satisfies a loop with both FKs inline, so one is deferred: B is created without
         // its FK to A, A is created (its target now exists), then B's constraint is added.
-        $resolution = DependencyOrder::resolve([OrdLoopARecord::class, OrdLoopBRecord::class]);
+        $resolution = DependencyOrder::resolve(self::schemas([OrdLoopARecord::class, OrdLoopBRecord::class]));
 
-        self::assertSame([OrdLoopBRecord::class, OrdLoopARecord::class], $resolution->classes);
+        self::assertSame(['ord_loop_b', 'ord_loop_a'], self::tableNames($resolution->schemas));
         self::assertTrue($resolution->hasDeferred());
-        self::assertSame(['fk_loop_b_a_id'], $resolution->deferredFor(OrdLoopBRecord::class));
-        self::assertSame([], $resolution->deferredFor(OrdLoopARecord::class), 'only one edge of the loop is deferred');
+        self::assertSame(['fk_loop_b_a_id'], $resolution->deferredFor('ord_loop_b'));
+        self::assertSame([], $resolution->deferredFor('ord_loop_a'), 'only one edge of the loop is deferred');
     }
 
     public function testAcyclicSetDefersNothing(): void
     {
-        $resolution = DependencyOrder::resolve([OrdGrandchildRecord::class, OrdChildRecord::class, OrdParentRecord::class]);
+        $resolution = DependencyOrder::resolve(self::schemas([OrdGrandchildRecord::class, OrdChildRecord::class, OrdParentRecord::class]));
 
         self::assertFalse($resolution->hasDeferred());
-        self::assertSame([], $resolution->deferredFor(OrdChildRecord::class));
+        self::assertSame([], $resolution->deferredFor('ord_child'));
+    }
+
+    /**
+     * A schema with no class behind it orders like any other — the table is the identity, and
+     * {@see TableSchema::extendedWith()} produces exactly such a schema.
+     */
+    public function testABuiltSchemaOrdersAlongsideClassDerivedOnes(): void
+    {
+        $extended = TableSchema::fromClass(OrdChildRecord::class)->extendedWith(
+            columns: ['dim_loc' => new ColumnDefinition(
+                name: 'dim_loc',
+                propertyName: 'dim_loc',
+                type: ColumnType::VarChar,
+                nullable: false,
+                autoIncrement: false,
+                trimOnSave: null,
+                length: 64,
+                precision: null,
+                scale: null,
+                default: '',
+            )],
+        );
+
+        $resolution = DependencyOrder::resolve([$extended, TableSchema::fromClass(OrdParentRecord::class)]);
+
+        // Still ordered by its declared FK — the parent first — despite the extra column.
+        self::assertSame(['ord_parent', 'ord_child'], self::tableNames($resolution->schemas));
+        self::assertContains('dim_loc', $resolution->schemas[1]->columnNames());
     }
 }

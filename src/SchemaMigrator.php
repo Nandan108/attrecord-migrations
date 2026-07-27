@@ -53,25 +53,41 @@ final class SchemaMigrator
     }
 
     /**
-     * Diff every Record class against the live database. Pure: executes no DDL, takes no lock.
+     * Diff every model against the live database. Pure: executes no DDL, takes no lock.
      * Pass them in any order — creation order is derived from the declared foreign keys.
      *
-     * @param list<class-string<Record>> $recordClasses
+     * A model is normally a Record **class-string**. It may also be a ready-made `TableSchema`,
+     * for a table whose shape is not fully expressible as a class — see
+     * {@see TableSchema::extendedWith()}. A `TableSchema` is taken at face value: it describes
+     * exactly what it describes, so {@see PartiallyDeclared} does not apply to it (the point of
+     * building one is that the previously-undescribable columns are now described).
+     *
+     * @param list<class-string<Record>|TableSchema> $models
      */
-    public function plan(array $recordClasses): Plan
+    public function plan(array $models): Plan
     {
+        $schemas = [];
+        $classByTable = [];
+        foreach ($models as $model) {
+            $schema = $model instanceof TableSchema ? $model : TableSchema::fromClass($model);
+            $schemas[] = $schema;
+            if (!$model instanceof TableSchema) {
+                $classByTable[$schema->tableName] = $model;
+            }
+        }
+
         // Ordering is derived, not demanded of the caller: a table's FK targets must exist before
         // it does, and the attributes already say which those are. A cycle has no such order, so
         // one constraint per loop is deferred out of its CREATE and added at the end.
-        $resolution = DependencyOrder::resolve($recordClasses);
+        $resolution = DependencyOrder::resolve($schemas);
 
         $changes = [];
         $deferredChanges = [];
-        foreach ($resolution->classes as $class) {
-            $schema = TableSchema::fromClass($class);
-            $omit = $resolution->deferredFor($class);
+        foreach ($resolution->schemas as $schema) {
+            $omit = $resolution->deferredFor($schema->tableName);
             $live = $this->support->introspector->introspectTable($this->connection->session, $schema->tableName);
-            $partial = is_a($class, PartiallyDeclared::class, true);
+            $class = $classByTable[$schema->tableName] ?? null;
+            $partial = null !== $class && is_a($class, PartiallyDeclared::class, true);
             foreach ($this->differ->diffTable($schema, $live, $omit, $partial) as $change) {
                 // A deferred constraint's target may be created later in this same plan, so its
                 // ADD has to trail every create rather than sit beside its own table's.
@@ -83,7 +99,7 @@ final class SchemaMigrator
             }
         }
 
-        return new Plan([...$changes, ...$deferredChanges], Fingerprint::of($this->connection->dialect, $resolution->classes));
+        return new Plan([...$changes, ...$deferredChanges], Fingerprint::of($this->connection->dialect, $resolution->schemas));
     }
 
     /**
@@ -181,13 +197,22 @@ final class SchemaMigrator
      * Canonical hash of the desired model set — store it (e.g. in a WP option) and skip even
      * `plan()`'s introspection while the running code's fingerprint matches the stored one.
      *
-     * @param list<class-string<Record>> $recordClasses
+     * Takes the same models as {@see Plan()}: Record class-strings, ready-made `TableSchema`s, or
+     * a mix. A built schema's columns are part of the hash like any other, so a consumer whose
+     * table shape depends on runtime data gets a fingerprint that moves when that data does.
+     *
+     * @param list<class-string<Record>|TableSchema> $models
      */
-    public function fingerprint(array $recordClasses): string
+    public function fingerprint(array $models): string
     {
+        $schemas = array_map(
+            static fn (string | TableSchema $m): TableSchema => $m instanceof TableSchema ? $m : TableSchema::fromClass($m),
+            $models,
+        );
+
         // Sorted first, so the fingerprint is a function of the model *set* — passing the same
-        // Records in a different order must not read as a schema change.
-        return Fingerprint::of($this->connection->dialect, DependencyOrder::resolve($recordClasses)->classes);
+        // models in a different order must not read as a schema change.
+        return Fingerprint::of($this->connection->dialect, DependencyOrder::resolve($schemas)->schemas);
     }
 
     /**

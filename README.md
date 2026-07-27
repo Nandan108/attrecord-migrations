@@ -113,12 +113,31 @@ Nothing to configure: the cycle is found in the declared graph, and which edge g
 out of the input order, so the same model set always resolves the same way. The deferred `ADD` is
 ordered after *every* create in the plan, because its target may be created later in the same run.
 
-## Tables you only partly declare
+## Tables whose shape is computed
 
-Some tables have a shape that is partly *computed*: a registry that grows a column per registered
-dimension, an extension table a plugin writes into. There, "live but undeclared" is the normal
-state, not drift — and reporting it would either train the reader to ignore the drift report or,
-at a `Destructive` ceiling, delete live data.
+Some tables have a shape that is only known at runtime: a registry that grows a column per
+registered dimension, an extension table a plugin writes into. A Record class cannot describe
+those, so `plan()` also accepts a ready-made `TableSchema` — derive one with attrecord's
+`TableSchema::extendedWith()` and pass it alongside your class-strings:
+
+```php
+$schema = TableSchema::fromClass(SlotSpace::class)->extendedWith(
+    columns: ['dim_loc' => new ColumnDefinition(name: 'dim_loc', /* … */)],
+    indexes: ['idx_dim_loc' => ['active', 'dim_loc']],
+);
+
+$migrator->plan([Order::class, Supplier::class, $schema]);
+```
+
+Those columns are then created, converged and diffed like any other — including being **added** to
+an existing table when the runtime set grows. `fingerprint()` covers them too, so the fast path
+notices when the runtime set changes. Describing them beats the alternative, a hand-written
+`ALTER TABLE` run at boot: a second source of DDL that no tooling can see or verify.
+
+### When you can't describe them: `PartiallyDeclared`
+
+If the extra columns genuinely cannot be enumerated, the Record can opt out of drift detection for
+whatever it does not declare:
 
 ```php
 #[Table(name: 'app_slotspace')]
@@ -129,7 +148,10 @@ The differ is then narrowed to what the Record declares: missing declared column
 still added, declared ones still converge, but nothing undeclared is ever proposed for dropping —
 columns, indexes and constraints alike. The trade-off is one-directional, which is why it is
 opt-in per Record: on such a table, a genuinely stray column from an old version is never
-surfaced either.
+surfaced either. Prefer describing the columns when you can; this is the fallback.
+
+(The two do not combine: a `TableSchema` you built is taken at face value, since the point of
+building it is that the columns are now described.)
 
 ## Fingerprint fast path
 

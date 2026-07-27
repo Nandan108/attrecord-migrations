@@ -18,6 +18,13 @@ All notable changes to this project are documented here. The format is based on
   `buildCreateTable(omitForeignKeys:)`) and the constraint is added after every create. Which edge
   is deferred is deterministic. On SQLite, which cannot add an FK to an existing table, the
   deferred constraint reports as `Manual` instead — pinned per backend by the test suite.
+- **`plan()` / `fingerprint()` accept a ready-made `TableSchema`** alongside Record class-strings,
+  for a table whose shape is only known at runtime — derive one with attrecord's
+  `TableSchema::extendedWith()`. Those columns are then created, converged, diffed and fingerprinted
+  like any other, instead of living in a hand-written `ALTER` that no tooling can see. Ordering is
+  keyed by table name rather than by class as a result: a schema need not come from a class, and
+  the table is the thing being created. (`DependencyOrder::resolve()` now takes and returns
+  `TableSchema`; `sort()` keeps its class-in/class-out shape.)
 - **`PartiallyDeclared`**: a Record may declare only part of its table. Implementing the interface
   narrows the differ to what is declared — missing declared columns and indexes are still added
   and declared ones still converge, but nothing live-but-undeclared is proposed for dropping. For
