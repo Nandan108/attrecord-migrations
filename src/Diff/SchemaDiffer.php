@@ -176,9 +176,8 @@ final class SchemaDiffer
         foreach (array_keys($live->indexes) as $name) {
             if (!isset($desiredIndexes[$name])) {
                 // MySQL implicitly creates a supporting index for every FK constraint (named after
-                // it) when none exists — that index is FK plumbing, not drift. Skip any live index
-                // whose name matches a live FK constraint.
-                if (isset($live->foreignKeys[$name])) {
+                // it) when none exists — that index is FK plumbing, not drift.
+                if (self::isForeignKeyPlumbing($live, $name)) {
                     continue;
                 }
                 $changes[] = new PlannedChange(
@@ -322,6 +321,37 @@ final class SchemaDiffer
         }
 
         return [$class, $mayReject];
+    }
+
+    /**
+     * Whether a live index is a foreign key's supporting index rather than schema drift.
+     *
+     * Name matching alone is not enough. MySQL names the index it creates after the constraint, but
+     * the two then have independent lifetimes: dropping one FK can leave *its* index as the only
+     * one covering the column, still required by a different FK on the same column. The index then
+     * matches no FK by name while remaining load-bearing, and `DROP INDEX` is refused (error 1553).
+     *
+     * So an index also counts as plumbing when it is non-unique and its leading columns are exactly
+     * some FK's local columns — the shape an engine creates to support that FK. The cost is that a
+     * genuinely operator-added index on precisely an FK's columns is never proposed for dropping;
+     * that is the fail-safe direction, and index drops are opt-in anyway.
+     */
+    private static function isForeignKeyPlumbing(LiveTable $live, string $indexName): bool
+    {
+        if (isset($live->foreignKeys[$indexName])) {
+            return true;
+        }
+        $index = $live->indexes[$indexName] ?? null;
+        if (null === $index || $index->unique) {
+            return false;
+        }
+        foreach ($live->foreignKeys as $fk) {
+            if (\array_slice($index->columns, 0, \count($fk->localColumns)) === $fk->localColumns) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function dimensionWidens(?int $desired, ?int $live): bool

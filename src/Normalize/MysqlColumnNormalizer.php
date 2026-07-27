@@ -80,7 +80,9 @@ final class MysqlColumnNormalizer extends AbstractColumnNormalizer
                 return NormalizedColumn::unsure("unparseable {$m[1]} member list: {$raw}");
             }
             $parsed = [$m[1], false, null, null, null, $members];
-        } elseif (1 === preg_match('/^(json|date|year|float|double|tinytext|text|mediumtext|longtext|tinyblob|blob|mediumblob|longblob)$/', $raw, $m)) {
+        } elseif (1 === preg_match('/^(json|date|year|float|double|tinytext|text|mediumtext|longtext|tinyblob|blob|mediumblob|longblob)(?:\(\d+\))?$/', $raw, $m)) {
+            // MariaDB reports YEAR with its (only legal) display width — `year(4)`; the width is
+            // never a distinguishing facet on these families, so it is dropped rather than modeled.
             $parsed = [$m[1], false, null, null, null, null];
         } else {
             return NormalizedColumn::unsure("unrecognized MySQL column type: {$raw}");

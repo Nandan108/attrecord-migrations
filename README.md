@@ -100,6 +100,9 @@ schema, so a restored backup or hand-edited database simply re-plans correctly.
   drift is undetectable there.
 - `ON UPDATE CURRENT_TIMESTAMP` drift and PostgreSQL `BIT` round-trips are not compared.
 - Tables the Records don't declare are **invisible** — never dropped, never touched.
+- An index whose leading columns are a foreign key's columns is treated as that FK's supporting
+  plumbing and never proposed for dropping, even if the Records don't declare it. A genuinely
+  operator-added index on exactly an FK's columns therefore survives — the fail-safe direction.
 
 ## Development
 
@@ -107,3 +110,15 @@ Tri-backend Definition of Done, mirroring attrecord's: `composer test` must be g
 MySQL/MariaDB + PostgreSQL + SQLite (a skipped backend is not a passing backend), psalm level 1
 clean, cs-fix applied. See `CLAUDE.md`. attrecord is consumed via a composer path repository in
 development.
+
+Two suites carry most of the weight, both against real engines:
+
+- **Golden round-trip** — every portable `ColumnType` (plus `SET`/`BIT` on MySQL, where they exist)
+  created by the DDL producer, introspected back, and asserted to normalize to *identical* tuples
+  on both sides. A type missing here is a type that could false-positive an ALTER at a consumer.
+- **Drift matrix** — one scenario per kind of drift (widen/narrow, nullability, default, integer
+  and decimal widening, enum members, rename, index reshape, FK action change, undeclared FK),
+  injected as raw DDL into a converged database, then `plan → assert kind + class → apply →
+  re-plan EMPTY`. Each backend states its own expectations, so the drifts an engine *cannot see*
+  (SQLite stores affinity, not width; enum members are MySQL-only) are pinned as explicitly empty
+  rather than quietly untested.

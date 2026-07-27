@@ -30,7 +30,12 @@ final class KitchenSinkRecord extends Record
     #[UniqueKey('uniq_sku')]
     public string $sku = '';
 
-    #[Column(ColumnType::VarChar, length: 191, default: '')]
+    /**
+     * The `renamedFrom` marker is *inert* while no `label_text` column exists — which is the
+     * production reality of a rename marker: permanent, and drift-free once converged. It only
+     * plans a rename against a database still carrying the old name (drift-matrix scenario).
+     */
+    #[Column(ColumnType::VarChar, length: 191, default: '', renamedFrom: 'label_text')]
     public string $label = '';
 
     #[Column(ColumnType::SmallIntUnsigned, default: 0)]

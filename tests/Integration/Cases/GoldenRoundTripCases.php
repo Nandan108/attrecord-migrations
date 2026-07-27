@@ -10,6 +10,7 @@ use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Normalize\ColumnNormalizer;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\KitchenSinkRecord;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\RefTargetRecord;
+use Nandan108\AttrecordMigrations\Tests\Fixtures\TypeMatrixRecord;
 
 /**
  * THE golden invariant (arch-migrations.md §4.2): a table freshly created from its Record must
@@ -27,20 +28,41 @@ trait GoldenRoundTripCases
 
     public function testFreshlyCreatedTableNormalizesIdenticallyOnBothSides(): void
     {
+        $this->assertRoundTrips([RefTargetRecord::class, KitchenSinkRecord::class]);
+    }
+
+    /**
+     * Every portable column type, so no type's normalization rests on inspection alone. Types that
+     * exist on only one engine are covered by that engine's own runner.
+     */
+    public function testEveryPortableColumnTypeRoundTrips(): void
+    {
+        $this->assertRoundTrips([TypeMatrixRecord::class]);
+    }
+
+    /**
+     * Create each Record's table with attrecord's own DDL producer, then assert the introspected
+     * shape normalizes to exactly the tuple the attributes describe.
+     *
+     * @param list<class-string<Record>> $classes
+     */
+    protected function assertRoundTrips(array $classes): void
+    {
         $dialect = Record::connection()->dialect;
-        foreach ([RefTargetRecord::class, KitchenSinkRecord::class] as $class) {
+        foreach ($classes as $class) {
             foreach (explode(";\n", $dialect->buildCreateTable(TableSchema::fromClass($class))) as $statement) {
                 static::$session->exec($statement);
             }
         }
 
         $normalizer = $this->normalizer();
-        foreach ([RefTargetRecord::class, KitchenSinkRecord::class] as $class) {
+        foreach ($classes as $class) {
             $schema = TableSchema::fromClass($class);
             $live = $this->introspector()->introspectTable(static::$session, $schema->tableName);
             $this->assertNotNull($live, "{$schema->tableName} must introspect");
 
             foreach ($schema->columns as $colName => $desired) {
+                $this->assertArrayHasKey($colName, $live->columns, "{$schema->tableName}.{$colName} must exist live");
                 $desiredNorm = $normalizer->normalizeDesired($desired);
                 $liveNorm = $normalizer->normalizeLive($live->columns[$colName]);
 

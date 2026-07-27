@@ -264,6 +264,30 @@ final class SchemaDifferTest extends TestCase
         self::assertStringContainsString('operator-added', $drop->reason);
     }
 
+    public function testIndexSupportingAForeignKeyIsNotDroppedEvenUnderAnotherName(): void
+    {
+        // MySQL names an FK's supporting index after the constraint, but the two have independent
+        // lifetimes: after one FK is dropped, its index can be the only one covering the column and
+        // still be required by another FK. Dropping it is refused by the engine — so an index whose
+        // leading columns are an FK's columns counts as plumbing whatever it is called.
+        $indexes = self::liveBase()->indexes;
+        $indexes['fk_since_dropped'] = new LiveIndex('fk_since_dropped', ['ref_id'], false);
+
+        self::assertSame([], self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(indexes: $indexes)));
+    }
+
+    public function testUndeclaredUniqueIndexOnForeignKeyColumnIsStillDropped(): void
+    {
+        // A *unique* index is never something an engine adds to support an FK, so the plumbing
+        // exemption must not swallow it — it is a real constraint the Records do not declare.
+        $indexes = self::liveBase()->indexes;
+        $indexes['uniq_ref'] = new LiveIndex('uniq_ref', ['ref_id'], true);
+
+        $drop = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(indexes: $indexes)), 'drop_index');
+        self::assertSame(ChangeClass::Destructive, $drop->class);
+        self::assertSame('uniq_ref', $drop->subject);
+    }
+
     public function testMissingForeignKeyAddsSafelyWithMayReject(): void
     {
         $add = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(fks: [])), 'add_foreign_key');

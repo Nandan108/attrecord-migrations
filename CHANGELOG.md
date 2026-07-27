@@ -20,13 +20,20 @@ on MySQL/MariaDB, PostgreSQL and SQLite:
   PG `::casts` / SERIAL / bare-TIMESTAMP≡(6) / unsigned collapse, SQLite type affinity.
 - **Diff + classification** (`SchemaDiffer`, `Plan`/`PlannedChange`/`ChangeClass`): Safe /
   Destructive / Manual ceiling model, `mayRejectExistingRows` flag, declared renames via
-  `#[Column(renamedFrom:)]` (never inferred), MySQL implicit FK-index recognition.
+  `#[Column(renamedFrom:)]` (never inferred), and recognition of an FK's supporting index by
+  **shape** — an engine-created index outlives the constraint it was named after, and can still be
+  required by another FK on the same column.
 - **ALTER emission** (per-dialect `AlterEmitter`s) built on attrecord's public DDL fragment seams —
   one rendering authority for CREATE and ALTER.
 - **`SchemaMigrator`** facade: pure `plan()` (+ model-set fingerprint), advisory-locked ceiling-
   filtered `apply()` with per-statement execution and a forensic run ledger
   (`attrecord_schema_runs`), run-once `dataStep()` registry (`attrecord_schema_steps`),
   `fingerprint()` fast path.
+
+Verified on real engines rather than on hand-built fixtures: a **golden round-trip** over every
+portable `ColumnType` (plus `SET`/`BIT` on MySQL) and a **drift matrix** running
+converge → inject drift → plan → apply → re-plan-empty for each kind of change, with per-backend
+expectations so undetectable drift is pinned as explicitly empty.
 
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
