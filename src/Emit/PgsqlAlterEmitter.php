@@ -1,0 +1,122 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Nandan108\AttrecordMigrations\Emit;
+
+use Nandan108\Attrecord\Dialect\PgsqlDialect;
+use Nandan108\Attrecord\Schema\ColumnDefinition;
+use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
+use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
+
+/**
+ * PostgreSQL ALTER wrappers. PG has no `MODIFY COLUMN`; a modification decomposes into granular
+ * `ALTER COLUMN` sub-clauses — `TYPE` (via the dialect's bare-type seam), `SET/DROP NOT NULL`,
+ * `SET/DROP DEFAULT` — combined into one `ALTER TABLE` statement. Only the drifted facets are
+ * touched. A `TYPE` change without an implicit cast fails loudly (no `USING` is ever guessed).
+ */
+final class PgsqlAlterEmitter implements AlterEmitter
+{
+    public function __construct(private readonly PgsqlDialect $dialect)
+    {
+    }
+
+    #[\Override]
+    public function addColumn(string $table, ColumnDefinition $col): array
+    {
+        return ['ALTER TABLE '.$this->q($table).' ADD COLUMN '.$this->dialect->buildColumnLine($col)];
+    }
+
+    #[\Override]
+    public function modifyColumn(string $table, ColumnDefinition $col, ColumnTuple $desired, array $facets): ?array
+    {
+        $qc = $this->q($col->name);
+        $clauses = [];
+
+        if ([] !== array_intersect($facets, ['type', 'unsigned', 'length', 'precision', 'scale', 'members'])) {
+            $clauses[] = "ALTER COLUMN {$qc} TYPE ".$this->dialect->renderColumnType($col);
+        }
+        if (\in_array('nullable', $facets, true)) {
+            $clauses[] = "ALTER COLUMN {$qc} ".($col->nullable ? 'DROP NOT NULL' : 'SET NOT NULL');
+        }
+        if (\in_array('default', $facets, true)) {
+            $clauses[] = "ALTER COLUMN {$qc} ".(null === $desired->default
+                ? 'DROP DEFAULT'
+                : 'SET DEFAULT '.$this->renderDefault($col));
+        }
+        if ([] === $clauses) {
+            return [];
+        }
+
+        return ['ALTER TABLE '.$this->q($table).' '.implode(', ', $clauses)];
+    }
+
+    #[\Override]
+    public function renameColumn(string $table, string $oldName, ColumnDefinition $col): array
+    {
+        return ['ALTER TABLE '.$this->q($table).' RENAME COLUMN '.$this->q($oldName).' TO '.$this->q($col->name)];
+    }
+
+    #[\Override]
+    public function dropColumn(string $table, string $column): array
+    {
+        return ['ALTER TABLE '.$this->q($table).' DROP COLUMN '.$this->q($column)];
+    }
+
+    #[\Override]
+    public function createIndex(string $table, string $name, array $columns, bool $unique): array
+    {
+        $cols = implode(', ', array_map($this->q(...), $columns));
+        if ($unique) {
+            // Match the producer: uniques are table CONSTRAINTs on PG (introspected via
+            // table_constraints), not bare unique indexes.
+            return ['ALTER TABLE '.$this->q($table).' ADD CONSTRAINT '.$this->q($name)." UNIQUE ({$cols})"];
+        }
+
+        return ['CREATE INDEX '.$this->q($name).' ON '.$this->q($table)." ({$cols})"];
+    }
+
+    #[\Override]
+    public function dropIndex(string $table, string $name): array
+    {
+        // A unique KEY is a constraint on PG, a secondary index is not; DROP CONSTRAINT IF EXISTS +
+        // DROP INDEX IF EXISTS covers both without the caller having to know which it was. Exactly
+        // one of the two acts; the other is a no-op.
+        return [
+            'ALTER TABLE '.$this->q($table).' DROP CONSTRAINT IF EXISTS '.$this->q($name),
+            'DROP INDEX IF EXISTS '.$this->q($name),
+        ];
+    }
+
+    #[\Override]
+    public function addForeignKey(string $table, ForeignKeyDefinition $fk): array
+    {
+        return ['ALTER TABLE '.$this->q($table).' ADD '.$this->dialect->buildForeignKeyLine($fk)];
+    }
+
+    #[\Override]
+    public function dropForeignKey(string $table, string $name): ?array
+    {
+        return ['ALTER TABLE '.$this->q($table).' DROP CONSTRAINT '.$this->q($name)];
+    }
+
+    #[\Override]
+    public function addColumnRestriction(ColumnDefinition $col): ?string
+    {
+        return null;
+    }
+
+    private function renderDefault(ColumnDefinition $col): string
+    {
+        if (null !== $col->defaultExpr) {
+            return $col->defaultExpr;
+        }
+
+        return $this->dialect->toLiteral($col->default, $col);
+    }
+
+    private function q(string $identifier): string
+    {
+        return $this->dialect->quoteIdentifier($identifier);
+    }
+}
