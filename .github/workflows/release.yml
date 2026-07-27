@@ -14,6 +14,9 @@ on:
       version:
         description: "Version to release, e.g. 0.1.0 (needs a matching '## [0.1.0]' CHANGELOG section)"
         required: true
+      title:
+        description: "Optional headline, e.g. 'Declarative schema convergence' — rendered as '<version> — <headline>'"
+        required: false
 
 permissions:
   contents: read
@@ -95,10 +98,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           VERSION: ${{ github.event.inputs.version }}
+          HEADLINE: ${{ github.event.inputs.title }}
         run: |
           set -euo pipefail
+          # Releases read as "0.1.0 — Declarative schema convergence": the version locates it, the
+          # headline says what it was for. Omitting the headline is allowed and yields the bare
+          # version.
+          TITLE="$VERSION"
+          if [ -n "$HEADLINE" ]; then TITLE="$VERSION — $HEADLINE"; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v$VERSION" -m "attrecord-migrations $VERSION"
+          git tag -a "v$VERSION" -m "attrecord-migrations $TITLE"
           git push origin "v$VERSION"
-          gh release create "v$VERSION" --title "$VERSION" --notes-file release-notes.md
+          gh release create "v$VERSION" --title "$TITLE" --notes-file release-notes.md
