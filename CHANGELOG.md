@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Composite primary keys are compared.** The migrations half of composite-PK support; attrecord's
+  `#[PrimaryKey(columns: […])]` is the other, and is inert without this one. The differ compared
+  the live key against `[$desired->pk]` — a single-element list — so a table declaring a composite
+  key could not match its own live definition on any engine, and would have reported `Manual` drift
+  forever from the moment it was created. It now compares `TableSchema::pkColumns()`, the whole key.
+
+  Listed as *added* rather than *fixed*: the desired side can only be composite once attrecord's
+  new attribute exists, so no released combination could reach the old behaviour. The line was
+  incomplete for a shape that only just became declarable, not broken.
+
+  The incompleteness ran both ways, and both are pinned per backend: a composite table converges
+  and re-plans empty, and a key *narrowed* to the first member is still reported — the second
+  mattering because such a key would have compared **equal** under the old comparison, hiding real
+  drift while flagging correct tables.
+
+  What it unlocks: tables of this shape previously needed hand-written DDL, and hand-written DDL is
+  invisible here — the differ compares the live database against *declared* schemas — so they sat
+  outside the managed set and drifted unobserved.
+
+  A *changed* key remains `Manual` by design: rebuilding a primary key rewrites the clustered index
+  and can fail on duplicate rows. Composite keys became comparable, not alterable.
+
+  Requires an attrecord providing `#[PrimaryKey(columns: …)]` and `TableSchema::pkColumns()`.
+
 ## [0.3.0] - 2026-07-29
 
 One bug, and it was the worst kind this package can have: on PostgreSQL and SQLite the plan came

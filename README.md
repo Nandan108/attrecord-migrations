@@ -198,6 +198,11 @@ $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
   package cannot parse yields "members unknown", and an unknown on either side skips the
   comparison rather than guessing — the fail-safe direction, and the one that keeps an unparseable
   body from planning a swap forever.
+- **Primary keys are compared but never altered.** A key that differs from the declaration —
+  composite or not — is reported `Manual` with both sides named, because rebuilding a primary key
+  rewrites the clustered index and can fail outright on duplicate rows. Composite keys are
+  *comparable* (a `#[PrimaryKey(columns: …)]` table converges from empty and re-plans empty on all
+  three backends), not alterable.
 - **MySQL-family `json`** folds to `longtext` (MariaDB stores JSON as LONGTEXT) — json↔longtext
   drift is undetectable there.
 - **Generated columns** are compared on every facet *except* nullability and the expression

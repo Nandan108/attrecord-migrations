@@ -10,6 +10,7 @@ use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SqliteIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\KitchenSinkRecord;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CompositePkCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\EvolutionCases;
@@ -19,6 +20,7 @@ use Nandan108\AttrecordMigrations\Tests\Support\SqliteIntegrationTestCase;
 final class EvolutionSqliteTest extends SqliteIntegrationTestCase
 {
     use CyclicSchemaCases;
+    use CompositePkCases;
     use DriftMatrixCases;
     use EvolutionCases;
 
@@ -122,5 +124,19 @@ final class EvolutionSqliteTest extends SqliteIntegrationTestCase
         self::assertStringContainsString($from, $ddl, 'drift fragment must exist in the produced DDL (fixture drifted?)');
 
         return array_merge(['DROP TABLE "mig_kitchen_sink"'], explode(";\n", str_replace($from, $to, $ddl)));
+    }
+
+    /**
+     * SQLite cannot alter a primary key at all, so the drift is injected by rebuilding the table —
+     * the same 12-step dance the emitter declines to automate.
+     */
+    #[\Override]
+    protected function dropAndNarrowPrimaryKeySql(string $quotedTable, string $quotedFirstColumn): array
+    {
+        return [
+            "DROP TABLE {$quotedTable}",
+            "CREATE TABLE {$quotedTable} (\"subject_id\" INTEGER NOT NULL, \"slot_id\" INTEGER NOT NULL, "
+                ."\"quantity\" INTEGER NOT NULL DEFAULT 0, PRIMARY KEY ({$quotedFirstColumn}))",
+        ];
     }
 }

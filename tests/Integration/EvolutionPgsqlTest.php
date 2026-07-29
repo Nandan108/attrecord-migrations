@@ -7,6 +7,7 @@ namespace Nandan108\AttrecordMigrations\Tests\Integration;
 use Nandan108\AttrecordMigrations\Introspect\PgsqlIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CompositePkCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\EvolutionCases;
@@ -16,6 +17,7 @@ use Nandan108\AttrecordMigrations\Tests\Support\PgsqlIntegrationTestCase;
 final class EvolutionPgsqlTest extends PgsqlIntegrationTestCase
 {
     use CyclicSchemaCases;
+    use CompositePkCases;
     use DriftMatrixCases;
     use EvolutionCases;
 
@@ -107,6 +109,18 @@ final class EvolutionPgsqlTest extends PgsqlIntegrationTestCase
                 'kinds' => ['drop_foreign_key'],
                 'class' => ChangeClass::Destructive,
             ],
+        ];
+    }
+
+    /** PostgreSQL names the constraint `<table>_pkey` and needs the drop and add as separate steps. */
+    #[\Override]
+    protected function dropAndNarrowPrimaryKeySql(string $quotedTable, string $quotedFirstColumn): array
+    {
+        $constraint = trim($quotedTable, '"').'_pkey';
+
+        return [
+            "ALTER TABLE {$quotedTable} DROP CONSTRAINT \"{$constraint}\"",
+            "ALTER TABLE {$quotedTable} ADD PRIMARY KEY ({$quotedFirstColumn})",
         ];
     }
 }

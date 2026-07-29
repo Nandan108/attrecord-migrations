@@ -20,7 +20,7 @@ use Nandan108\AttrecordMigrations\Plan\PlannedChange;
  * against its introspected {@see LiveTable} and emits classified {@see PlannedChange}s.
  *
  * Fail-safe bias throughout: anything the pipeline is unsure about — an unparseable live type, an
- * ambiguous facet (generated exprs, auto-increment drift), a composite/changed PK, an engine
+ * ambiguous facet (generated exprs, auto-increment drift), a *changed* PK, an engine
  * without the needed ALTER — becomes a **Manual** change with a reason and no SQL. The differ
  * never guesses an ALTER.
  *
@@ -72,7 +72,11 @@ final class SchemaDiffer
         $changes = [];
 
         // --- Primary key: never altered automatically. ---
-        $desiredPk = [$desired->pk];
+        // pkColumns() is the whole key — a single-entry list on an ordinary table, every member on
+        // a composite one. Reading `pk` here instead compared only the first member, so a table
+        // declaring #[PrimaryKey(columns: …)] could never match its own live definition and
+        // reported Manual drift forever, including immediately after being created.
+        $desiredPk = $desired->pkColumns();
         if ($live->primaryKey !== $desiredPk) {
             $changes[] = $this->manual($table, $desired->pk, sprintf(
                 'primary key differs (live: [%s], desired: [%s]) — PK changes are never auto-applied',

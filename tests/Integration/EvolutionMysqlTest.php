@@ -7,6 +7,7 @@ namespace Nandan108\AttrecordMigrations\Tests\Integration;
 use Nandan108\AttrecordMigrations\Introspect\MysqlIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CompositePkCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\EvolutionCases;
@@ -16,6 +17,7 @@ use Nandan108\AttrecordMigrations\Tests\Support\MysqlIntegrationTestCase;
 final class EvolutionMysqlTest extends MysqlIntegrationTestCase
 {
     use CyclicSchemaCases;
+    use CompositePkCases;
     use DriftMatrixCases;
     use EvolutionCases;
 
@@ -104,5 +106,12 @@ final class EvolutionMysqlTest extends MysqlIntegrationTestCase
                 // DROP INDEX the engine rejects (error 1553).
             ],
         ];
+    }
+
+    /** MySQL can drop and re-add a primary key in one ALTER. */
+    #[\Override]
+    protected function dropAndNarrowPrimaryKeySql(string $quotedTable, string $quotedFirstColumn): array
+    {
+        return ["ALTER TABLE {$quotedTable} DROP PRIMARY KEY, ADD PRIMARY KEY ({$quotedFirstColumn})"];
     }
 }
