@@ -29,6 +29,18 @@ final class LiveColumn
         public readonly ?string $generationExpression = null,
         /** Raw ON UPDATE expression (MySQL-family EXTRA), or null. Captured but not diffed in v0.1 (see design §3.1 Manual notes). */
         public readonly ?string $rawOnUpdate = null,
+        /**
+         * Body of the CHECK constraint named `chk_<column>_enum`, exactly as the engine reports it,
+         * or null when the column has none. This is how enum members stay visible on the dialects
+         * with no native ENUM type (PostgreSQL, SQLite), where the producer stores the member list
+         * in a CHECK rather than in the column type.
+         *
+         * Deliberately un-parsed here — engines rewrite the body (PG turns `col IN ('a','b')` into
+         * `col = ANY (ARRAY['a'::text, 'b'::text])`), and untangling that is the normalizer's job,
+         * like every other canonicalization. Null on MySQL-family, whose members are legible in the
+         * type string itself.
+         */
+        public readonly ?string $rawEnumCheck = null,
     ) {
     }
 }

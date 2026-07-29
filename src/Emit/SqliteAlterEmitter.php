@@ -31,7 +31,11 @@ final class SqliteAlterEmitter implements AlterEmitter
     #[\Override]
     public function modifyColumn(string $table, ColumnDefinition $col, ColumnTuple $desired, array $facets): ?array
     {
-        return null; // no in-place modification — §4.4 rebuild boundary, Manual in v0.1
+        // No in-place modification — §4.4 rebuild boundary, Manual in v0.1. Enum member drift
+        // lands here too: SQLite has no DROP CONSTRAINT, so widening the CHECK that carries the
+        // members needs the 12-step table rebuild. It is now *detected* rather than silently
+        // ignored, which is the point — a Manual change tells the operator what to do.
+        return null;
     }
 
     #[\Override]

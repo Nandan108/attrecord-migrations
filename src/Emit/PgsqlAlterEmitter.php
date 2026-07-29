@@ -36,6 +36,24 @@ final class PgsqlAlterEmitter implements AlterEmitter
         if ([] !== array_intersect($facets, ['type', 'unsigned', 'length', 'precision', 'scale', 'members'])) {
             $clauses[] = "ALTER COLUMN {$qc} TYPE ".$this->dialect->renderColumnType($col);
         }
+        if (\in_array('members', $facets, true)) {
+            // An enum's members live in a CHECK constraint on PG, so retyping the column (TEXT ->
+            // TEXT) changes nothing on its own — the constraint has to be swapped. PG has no
+            // "alter constraint body", so it is a drop and an add in one statement.
+            //
+            // Two drops: the producer's own name, and the name PG auto-assigns to an anonymous
+            // column CHECK ({table}_{column}_check), which is what tables created before the
+            // constraint was named still carry. IF EXISTS makes the irrelevant one a no-op, so a
+            // table from either era converges without the emitter needing to know which it is.
+            $constraint = ColumnDefinition::enumCheckConstraintName($col->name);
+            $clauses[] = 'DROP CONSTRAINT IF EXISTS '.$this->q($constraint);
+            $clauses[] = 'DROP CONSTRAINT IF EXISTS '.$this->q($table.'_'.$col->name.'_check');
+            $clauses[] = 'ADD CONSTRAINT '.$this->q($constraint)
+                ." CHECK ({$qc} IN (".implode(', ', array_map(
+                    fn (string $v): string => $this->dialect->toLiteral($v, $col),
+                    $col->enumValues ?? [],
+                )).'))';
+        }
         if (\in_array('nullable', $facets, true)) {
             $clauses[] = "ALTER COLUMN {$qc} ".($col->nullable ? 'DROP NOT NULL' : 'SET NOT NULL');
         }

@@ -11,10 +11,14 @@ use Nandan108\AttrecordMigrations\Live\LiveColumn;
 /**
  * PostgreSQL canonicalization. Both sides collapse what PG cannot represent: `unsigned` is always
  * false, binary lengths are null (BYTEA is unsized), and the tiny/medium integer families fold to
- * PG's smallint/integer/bigint — mirroring `PgsqlDialect::renderColumnType()`. Enum members are
- * invisible on PG (the producer stores them in a CHECK constraint, which introspection does not
- * model in v0.1), so `members` is null on both sides — member drift is undetected here and caught
- * on MySQL-family databases.
+ * PG's smallint/integer/bigint — mirroring `PgsqlDialect::renderColumnType()`.
+ *
+ * Enum members are carried by the producer's `chk_<column>_enum` CHECK constraint rather than by
+ * the column type, PG having no native ENUM. They are recovered from the introspected constraint
+ * body by {@see EnumCheckParser} — which is why an enum column normalizes to `text` yet still
+ * reports `members`. When the body is unreadable the parser returns null, and a null on either
+ * side makes the facet compare equal, which is the old blind spot narrowed to the cases nobody
+ * can parse rather than applied to every enum.
  *
  * PG quirk owned here: a bare TIMESTAMP *is* timestamp(6), so precision null/0 canonicalizes to 6.
  */
@@ -61,7 +65,7 @@ final class PgsqlColumnNormalizer extends AbstractColumnNormalizer
             default: self::canonDefaultForFamily($family, self::desiredDefault($col)),
             autoIncrement: $col->autoIncrement,
             generated: self::looseExpr($col->generatedAs),
-            members: null,
+            members: ColumnType::Enum === $type ? ($col->enumValues ?? null) : null,
         ));
     }
 
@@ -108,7 +112,7 @@ final class PgsqlColumnNormalizer extends AbstractColumnNormalizer
             default: self::canonDefaultForFamily($family, $this->liveDefault($col)),
             autoIncrement: $col->autoIncrement,
             generated: self::looseExpr($col->generationExpression),
-            members: null,
+            members: null !== $col->rawEnumCheck ? EnumCheckParser::members($col->rawEnumCheck) : null,
         ));
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nandan108\AttrecordMigrations\Introspect;
 
 use Nandan108\Attrecord\DbSession;
+use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\AttrecordMigrations\Live\LiveColumn;
 use Nandan108\AttrecordMigrations\Live\LiveForeignKey;
 use Nandan108\AttrecordMigrations\Live\LiveIndex;
@@ -39,6 +40,19 @@ final class PgsqlIntrospector implements SchemaIntrospector
             return null;
         }
 
+        // Enum members live in a CHECK constraint on PG (no native ENUM type), keyed by the
+        // producer's deterministic constraint name. Fetched per table in one query rather than
+        // per column: a table with many enums would otherwise be N round-trips.
+        $enumChecks = [];
+        foreach ($session->fetchAll(
+            "SELECT conname, pg_get_constraintdef(oid) AS condef
+             FROM pg_constraint
+             WHERE conrelid = to_regclass(?) AND contype = 'c'",
+            [$tableName],
+        ) as $row) {
+            $enumChecks[(string) $row['conname']] = (string) $row['condef'];
+        }
+
         $columns = [];
         foreach ($columnRows as $row) {
             $name = (string) $row['column_name'];
@@ -65,6 +79,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
                 rawDefault: $isSequenceDefault ? null : $rawDefault,
                 autoIncrement: $autoIncrement,
                 generationExpression: '' !== $generation ? $generation : null,
+                rawEnumCheck: $enumChecks[ColumnDefinition::enumCheckConstraintName($name)] ?? null,
             );
         }
 

@@ -185,8 +185,14 @@ $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
   (the table-rebuild dance is phase 2). `ADD COLUMN` with a non-constant default likewise. This
   also means a **cyclic** schema only partly converges there: the tables are created, but the
   deferred constraint (see "Circular foreign keys" above) cannot be added and is reported as Manual.
-- **Enum members** are only introspectable on MySQL-family (PG/SQLite store them in CHECK
-  constraints, not modeled yet) — member drift is caught on MySQL, invisible elsewhere.
+- **Enum members** are visible on all three backends. MySQL-family carries them in the column
+  type; PostgreSQL and SQLite have no native ENUM, so the producer stores them in a
+  `chk_<column>_enum` CHECK constraint and they are read back out of it. PostgreSQL applies a
+  member change by swapping that constraint; **SQLite detects but cannot apply it** (no
+  `DROP CONSTRAINT` — it needs the table rebuild), so it classifies Manual. A constraint body this
+  package cannot parse yields "members unknown", and an unknown on either side skips the
+  comparison rather than guessing — the fail-safe direction, and the one that keeps an unparseable
+  body from planning a swap forever.
 - **MySQL-family `json`** folds to `longtext` (MariaDB stores JSON as LONGTEXT) — json↔longtext
   drift is undetectable there.
 - **Generated columns** are compared on every facet *except* nullability and the expression
@@ -253,8 +259,10 @@ Two suites carry most of the weight, both against real engines:
   and decimal widening, enum members, rename, index reshape, FK action change, undeclared FK),
   injected as raw DDL into a converged database, then `plan → assert kind + class → apply →
   re-plan EMPTY`. Each backend states its own expectations, so the drifts an engine *cannot see*
-  (SQLite stores affinity, not width; enum members are MySQL-only) are pinned as explicitly empty
-  rather than quietly untested.
+  (SQLite stores affinity, not width) are pinned as explicitly empty rather than quietly untested.
+  The enum-member scenario is why that matters: it sat pinned as empty on PG and SQLite for a
+  release, which is exactly how long the blind spot went unnoticed — the expectations now say
+  `modify_column`/Safe and `manual`/Manual.
 
 ### Code style & static analysis
 

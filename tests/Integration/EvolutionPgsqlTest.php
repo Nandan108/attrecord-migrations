@@ -68,21 +68,17 @@ final class EvolutionPgsqlTest extends PgsqlIntegrationTestCase
                 'class' => ChangeClass::Safe,
             ],
             'enum_member_append' => [
-                // Dropping the members' CHECK constraint outright is the loudest member drift there
-                // is — and PG still plans nothing, because v0.1 does not model CHECK constraints.
-                // The documented blind spot, pinned so it cannot regress into a surprise.
-                'ddl' => [<<<'SQL'
-                    DO $$
-                    DECLARE c text;
-                    BEGIN
-                        SELECT conname INTO c FROM pg_constraint
-                        WHERE conrelid = 'mig_kitchen_sink'::regclass AND contype = 'c' LIMIT 1;
-                        IF c IS NOT NULL THEN
-                            EXECUTE format('ALTER TABLE mig_kitchen_sink DROP CONSTRAINT %I', c);
-                        END IF;
-                    END $$;
-                    SQL],
-                'kinds' => [],
+                // Live lists one fewer member than declared ('gone' added in code but not yet in
+                // the database) — the same shape the other two backends test, and the drift that
+                // used to be invisible here: the members live in a CHECK constraint, so with that
+                // constraint unread the plan came back empty while the database went on rejecting
+                // the new value. Growth cannot invalidate a stored value, so it stays Safe.
+                'ddl' => [
+                    'ALTER TABLE "mig_kitchen_sink" DROP CONSTRAINT "chk_status_enum"',
+                    'ALTER TABLE "mig_kitchen_sink" ADD CONSTRAINT "chk_status_enum" CHECK ("status" IN (\'draft\', \'live\'))',
+                ],
+                'kinds' => ['modify_column'],
+                'class' => ChangeClass::Safe,
             ],
             'rename_column' => [
                 'ddl'   => [$alter('RENAME COLUMN "label" TO "label_text"')],

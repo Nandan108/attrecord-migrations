@@ -6,6 +6,47 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Enum member drift is no longer invisible on PostgreSQL and SQLite.** Neither has a native ENUM
+  type, so the producer stores the member list in a CHECK constraint — which this package did not
+  read. Both sides normalized to `members: null`, `null !== null` is false, and the differ
+  concluded there was no drift. The failure that produced: add a case to a PHP backed enum, run
+  convergence against PostgreSQL, get an **empty plan** — schema reports healthy — and then watch
+  the first `INSERT` carrying the new value die on a constraint violation. Silent at migration
+  time, loud at runtime, and reported clean by the one tool whose job was to say otherwise. MySQL
+  never had this: its members are legible in the column type.
+
+  Members are now recovered from the constraint body by `EnumCheckParser`. Detection works on all
+  three backends; **PostgreSQL also applies** the change (dropping and re-adding the constraint in
+  one statement, since PG has no "alter constraint body"), while **SQLite detects but classifies
+  Manual** — it has no `DROP CONSTRAINT`, so widening needs the 12-step table rebuild. Growth stays
+  Safe on both, member removal Destructive, unchanged from the MySQL rule.
+
+  Parsing is deliberately narrow: it recovers the shapes an engine produces from the *one*
+  expression the producer emits, not CHECK expressions in general. PostgreSQL alone rewrites
+  `col IN ('a','b')` four different ways depending on column type and member count — collapsing a
+  single member to `col = 'x'::text`, double-casting on VARCHAR — and a general expression differ
+  would have to reconcile all of that against the declared text, re-planning forever. That is the
+  trap generated columns already fell into. Every rendering in `EnumCheckParserTest` was captured
+  from a live PostgreSQL 16 / SQLite 3, not written from the documentation, because three of the
+  four are not what the documentation would lead you to expect.
+
+  An unparseable body yields "members unknown", and an unknown on **either** side now skips the
+  facet instead of diffing it. Without that, an unreadable constraint would plan a swap whose
+  result is still unreadable — a plan that never converges, breaking the invariant that a freshly
+  created table re-plans empty.
+
+  The drift matrix had `enum_member_append` pinned as "not representable on this engine" for both
+  backends. That pin was the blind spot, faithfully recorded and shipped; both now assert real
+  outcomes.
+
+  Requires attrecord >= 0.13, which names the constraint `chk_<column>_enum`. The name is the whole
+  mechanism: PostgreSQL rewrites the *body* but leaves the name alone, so it is the only stable
+  handle on which constraint holds the members. PostgreSQL's auto-name for an anonymous column
+  CHECK (`<table>_<column>_check`) is also dropped when swapping, so tables created before the
+  constraint was named still converge.
+
 ## [0.2.0] - 2026-07-27
 
 Everything here came out of dogfooding the pipeline against a real schema (InvFlux's, ~58 tables)

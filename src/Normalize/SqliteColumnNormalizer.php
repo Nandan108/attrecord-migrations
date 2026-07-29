@@ -17,6 +17,12 @@ use Nandan108\AttrecordMigrations\Live\LiveColumn;
  *
  * The live side applies SQLite's own type-affinity algorithm, so tables created outside the
  * attrecord producer (arbitrary declared types like `VARCHAR(64)`) still normalize.
+ *
+ * Enum is the one place SQLite sees *more* than its affinity: with no native ENUM type the
+ * producer puts the member list in a `chk_<column>_enum` CHECK constraint, and SQLite stores DDL
+ * verbatim, so {@see EnumCheckParser} reads back exactly what was written. Member drift is
+ * therefore detected here — though not auto-applied, SQLite having no `DROP CONSTRAINT`
+ * (see SqliteAlterEmitter).
  */
 final class SqliteColumnNormalizer extends AbstractColumnNormalizer
 {
@@ -43,7 +49,7 @@ final class SqliteColumnNormalizer extends AbstractColumnNormalizer
             default: self::canonDefaultForFamily($family, self::desiredDefault($col)),
             autoIncrement: $col->autoIncrement,
             generated: self::looseExpr($col->generatedAs),
-            members: null,
+            members: ColumnType::Enum === $type ? ($col->enumValues ?? null) : null,
         ));
     }
 
@@ -62,7 +68,7 @@ final class SqliteColumnNormalizer extends AbstractColumnNormalizer
             default: self::canonDefaultForFamily($family, $this->liveDefault($col)),
             autoIncrement: $col->autoIncrement,
             generated: self::looseExpr($col->generationExpression),
-            members: null,
+            members: null !== $col->rawEnumCheck ? EnumCheckParser::members($col->rawEnumCheck) : null,
         ));
     }
 

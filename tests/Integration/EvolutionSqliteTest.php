@@ -73,8 +73,14 @@ final class EvolutionSqliteTest extends SqliteIntegrationTestCase
                 'kinds' => [], // NUMERIC affinity carries no precision
             ],
             'enum_member_append' => [
+                // Members live in a CHECK constraint here (no native ENUM) and are now read back
+                // out of it, so the drift is *detected*. Applying it is another matter: SQLite has
+                // no DROP CONSTRAINT, so widening needs the 12-step table rebuild and the change
+                // is Manual. Detected-but-not-applied is the honest outcome, and strictly better
+                // than the silence this used to pin.
                 'ddl'   => $this->rebuiltKitchenSink("IN ('draft', 'live', 'gone')", "IN ('draft', 'live')"),
-                'kinds' => [], // members live in a CHECK constraint, not modeled in v0.1
+                'kinds' => ['manual'],
+                'class' => ChangeClass::Manual,
             ],
             'rename_column' => [
                 // RENAME COLUMN exists since 3.25 — the one structural fix SQLite does in place.

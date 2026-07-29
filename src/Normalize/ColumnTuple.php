@@ -18,7 +18,12 @@ namespace Nandan108\AttrecordMigrations\Normalize;
  */
 final class ColumnTuple
 {
-    /** @param list<string>|null $members enum/SET members, when the dialect can see them on both sides (MySQL-family only) */
+    /**
+     * @param list<string>|null $members enum/SET members, or null when this side cannot see them.
+     *                                   Legible in the type string on MySQL-family; recovered from
+     *                                   the `chk_<column>_enum` CHECK constraint on PostgreSQL and
+     *                                   SQLite, which have no native ENUM type.
+     */
     public function __construct(
         /** Canonical type family in the dialect's own vocabulary, lowercased: `smallint`, `varchar`, `bool`, `jsonb`, `text`, … */
         public readonly string $type,
@@ -60,6 +65,14 @@ final class ColumnTuple
      * direction and is documented as a limitation. A column gaining or losing generation
      * entirely is still caught: only one side is generated then, so the facet is compared.
      *
+     * *Members* are skipped when **either** side is null, null meaning "cannot see the members"
+     * rather than "has none". It is the same fail-safe direction, and here it is load-bearing: on
+     * PostgreSQL and SQLite the member list is read back out of a CHECK constraint, and a body
+     * this package cannot parse yields null. Diffing that would plan a constraint swap whose
+     * result is still unparseable — a plan that never converges, breaking the invariant that a
+     * freshly created table re-plans empty. A column that is genuinely an enum on both sides
+     * parses on both sides, which is the case the detection exists for.
+     *
      * @return list<string>
      */
     public function diffFacets(self $other): array
@@ -80,6 +93,9 @@ final class ColumnTuple
             'members'       => [$this->members, $other->members],
         ] as $facet => [$a, $b]) {
             if ($bothGenerated && ('nullable' === $facet || 'generated' === $facet)) {
+                continue;
+            }
+            if ('members' === $facet && (null === $a || null === $b)) {
                 continue;
             }
             if ($a !== $b) {

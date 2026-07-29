@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nandan108\AttrecordMigrations\Introspect;
 
 use Nandan108\Attrecord\DbSession;
+use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\AttrecordMigrations\Live\LiveColumn;
 use Nandan108\AttrecordMigrations\Live\LiveForeignKey;
 use Nandan108\AttrecordMigrations\Live\LiveIndex;
@@ -71,6 +72,7 @@ final class SqliteIntrospector implements SchemaIntrospector
                 rawDefault: isset($row['dflt_value']) ? (string) $row['dflt_value'] : null,
                 autoIncrement: $isAiPk,
                 generationExpression: $isGenerated ? self::extractGenerationExpr($createSql, $name) : null,
+                rawEnumCheck: self::extractEnumCheck($createSql, $name),
             );
         }
 
@@ -143,6 +145,56 @@ final class SqliteIntrospector implements SchemaIntrospector
     }
 
     /** Best-effort: pull `GENERATED ALWAYS AS (expr)` for a column out of the stored CREATE sql. */
+    /**
+     * Recover the body of the producer's `chk_<column>_enum` CHECK constraint from the stored
+     * CREATE sql — how enum members stay visible on SQLite, which has no native ENUM type.
+     *
+     * SQLite stores the DDL text verbatim, so unlike PostgreSQL this is the producer's own
+     * expression, unrewritten. It still cannot be a plain regex: a member may contain a
+     * parenthesis (`'a)b'`), so the closing paren is found by balancing while skipping over
+     * single-quoted literals rather than by matching the first `)`.
+     */
+    private static function extractEnumCheck(string $createSql, string $column): ?string
+    {
+        $marker = 'CONSTRAINT "'.ColumnDefinition::enumCheckConstraintName($column).'" CHECK (';
+        $at = stripos($createSql, $marker);
+        if (false === $at) {
+            return null;
+        }
+
+        $i = $at + \strlen($marker);
+        $depth = 1;
+        $length = \strlen($createSql);
+        $start = $i;
+
+        while ($i < $length) {
+            $char = $createSql[$i];
+            if ("'" === $char) {
+                // Skip the literal wholesale; `''` inside it is an escaped quote, not a close.
+                ++$i;
+                while ($i < $length) {
+                    if ("'" === $createSql[$i]) {
+                        if ($i + 1 < $length && "'" === $createSql[$i + 1]) {
+                            $i += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    ++$i;
+                }
+            } elseif ('(' === $char) {
+                ++$depth;
+            } elseif (')' === $char) {
+                if (0 === --$depth) {
+                    return substr($createSql, $start, $i - $start);
+                }
+            }
+            ++$i;
+        }
+
+        return null; // unbalanced — treat as unreadable rather than guess
+    }
+
     private static function extractGenerationExpr(string $createSql, string $column): ?string
     {
         $pattern = '/"?'.preg_quote($column, '/').'"?\s+\S+\s+GENERATED\s+ALWAYS\s+AS\s*\((.*?)\)\s*(?:STORED|VIRTUAL)/is';
