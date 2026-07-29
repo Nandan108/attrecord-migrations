@@ -25,7 +25,12 @@ Backends: **MySQL/MariaDB, PostgreSQL, SQLite** — same tri-dialect matrix as a
 composer require nandan108/attrecord-migrations
 ```
 
-Requires PHP 8.1+ and `nandan108/attrecord` ^0.12. No other runtime dependencies.
+Requires PHP 8.1+ and `nandan108/attrecord` ^0.13. No other runtime dependencies.
+
+Footprint: `src/` is ~134 KB across 33 files (~66 KB of that is code — the other 51% is
+docblocks), so the published package is **~63 KB zipped**. That is on top of attrecord itself, and
+only for consumers who want schema convergence: the split exists so writing rows never drags in
+the machinery that rewrites schemas.
 
 It is a **separate package by design**: attrecord's DDL producer is fresh-install only, and
 schema *evolution* carries risks (destructive ALTERs, live introspection, a safety model) that
