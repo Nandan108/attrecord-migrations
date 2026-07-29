@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-29
+
+One bug, and it was the worst kind this package can have: on PostgreSQL and SQLite the plan came
+back **empty** while the database was rejecting writes. A tool whose entire promise is "an empty
+plan means the schema matches" cannot afford a case where it does not, so this is a minor bump
+rather than a patch despite being a single fix.
+
+### Changed
+
+- **Requires `nandan108/attrecord` ^0.13** (was ^0.12), for
+  `ColumnDefinition::enumCheckConstraintName()` — the shared definition of the constraint name that
+  makes enum members findable on both the introspect and the emit side.
+
 ### Fixed
 
 - **Enum member drift is no longer invisible on PostgreSQL and SQLite.** Neither has a native ENUM
