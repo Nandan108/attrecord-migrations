@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-29
+
+The other half of attrecord 0.14.0's composite primary keys. A table keyed on two columns can now
+be declared *and* compared, which together are what let it into a managed schema at all — declaring
+it without comparing it would have reported drift forever.
+
+### Changed
+
+- **Requires `nandan108/attrecord` ^0.14** (was ^0.13), for `#[PrimaryKey(columns: …)]` and
+  `TableSchema::pkColumns()`.
+
 ### Added
 
 - **Composite primary keys are compared.** The migrations half of composite-PK support; attrecord's
