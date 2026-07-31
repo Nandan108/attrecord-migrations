@@ -18,6 +18,12 @@ Done, same cross-dialect gotcha discipline, same release rules.
    **design contract in attrecord's repo** (arch-migrations.md), not here.
 4. This package **never writes through core seams that don't exist** — if a need surfaces, the
    seam is added to attrecord first (with its own tests), then consumed here.
+5. **No consumer domain vocabulary** — attrecord's rule applies here, and this package is where it
+   is easiest to break: an integration fixture modelling a real consumer's table is the natural
+   thing to reach for, and it is how the composite-PK fixture ended up keyed
+   `(subject_id, slot_id)` and documented as InvFlux's `inventory_state`. Keep the *shape* that
+   makes a fixture representative — a hot-path state table whose composite key doubles as its
+   clustering key — and drop whose table it is.
 
 ## Safety invariants (the reason this package is separate)
 

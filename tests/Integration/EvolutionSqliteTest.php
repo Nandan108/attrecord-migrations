@@ -135,7 +135,7 @@ final class EvolutionSqliteTest extends SqliteIntegrationTestCase
     {
         return [
             "DROP TABLE {$quotedTable}",
-            "CREATE TABLE {$quotedTable} (\"subject_id\" INTEGER NOT NULL, \"slot_id\" INTEGER NOT NULL, "
+            "CREATE TABLE {$quotedTable} (\"owner_id\" INTEGER NOT NULL, \"item_id\" INTEGER NOT NULL, "
                 ."\"quantity\" INTEGER NOT NULL DEFAULT 0, PRIMARY KEY ({$quotedFirstColumn}))",
         ];
     }

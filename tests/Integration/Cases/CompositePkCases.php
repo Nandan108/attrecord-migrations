@@ -70,7 +70,7 @@ trait CompositePkCases
         $live = $this->introspector()->introspectTable(Record::connection()->session, $table);
 
         self::assertNotNull($live);
-        self::assertSame(['subject_id', 'slot_id'], $live->primaryKey);
+        self::assertSame(['owner_id', 'item_id'], $live->primaryKey);
     }
 
     /**
@@ -85,7 +85,7 @@ trait CompositePkCases
 
         $table = TableSchema::fromClass(CompositePkRecord::class)->tableName;
         $q = Record::connection()->dialect->quoteIdentifier(...);
-        foreach ($this->dropAndNarrowPrimaryKeySql($q($table), $q('subject_id')) as $sql) {
+        foreach ($this->dropAndNarrowPrimaryKeySql($q($table), $q('owner_id')) as $sql) {
             static::$session->exec($sql);
         }
 
