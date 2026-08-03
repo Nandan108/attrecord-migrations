@@ -10,10 +10,12 @@ namespace Nandan108\AttrecordMigrations\Live;
  * Introspectors do **no interpretation** beyond mapping their catalog's rows into this shape —
  * type strings, default expressions and generation expressions are stored as the engine reports
  * them (lowercased where the engine is case-insensitive). All aliasing, quoting and cross-dialect
- * canonicalization is the normalizer's job (arch-migrations.md §4.2); keeping this DTO raw is what
+ * canonicalization is the normalizer's job (the design contract §4.2); keeping this DTO raw is what
  * makes the normalizers pure string-in/tuple-out units.
  *
  * @psalm-suppress PossiblyUnusedProperty Public data surface — read by the diff pipeline and by consumers.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class LiveColumn
 {

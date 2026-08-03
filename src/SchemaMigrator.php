@@ -17,7 +17,7 @@ use Nandan108\AttrecordMigrations\Plan\Plan;
 use Nandan108\AttrecordMigrations\Plan\PlannedChange;
 
 /**
- * The facade (arch-migrations.md §3): `plan()` / `apply()` / `dataStep()` / `fingerprint()`.
+ * The facade (the design contract §3): `plan()` / `apply()` / `dataStep()` / `fingerprint()`.
  *
  * - `plan()` is **pure** — introspection reads only, always safe to call, inspectable output.
  * - `apply()` is explicit and guarded: advisory-locked, ceiling-filtered (Safe by default,
@@ -29,6 +29,8 @@ use Nandan108\AttrecordMigrations\Plan\PlannedChange;
  * The migrator binds all its Record work (the two ledger tables) to its own Connection via
  * `Record::usingConnection()`, so it neither depends on nor disturbs the consumer's global
  * attrecord binding.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class SchemaMigrator
 {
@@ -160,7 +162,7 @@ final class SchemaMigrator
     }
 
     /**
-     * Run-once data step (arch-migrations.md §6.2): executes `$step` at most once per database,
+     * Run-once data step (the design contract §6.2): executes `$step` at most once per database,
      * keyed by `$key`, recording the key in the step ledger. Returns true when the step ran, false
      * when its key had already run. The closure receives this migrator's `DbSession`.
      *

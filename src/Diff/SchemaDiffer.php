@@ -16,7 +16,7 @@ use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\Plan\PlannedChange;
 
 /**
- * The diff + classifier (arch-migrations.md §4.3): compares one Record's desired `TableSchema`
+ * The diff + classifier (the design contract §4.3): compares one Record's desired `TableSchema`
  * against its introspected {@see LiveTable} and emits classified {@see PlannedChange}s.
  *
  * Fail-safe bias throughout: anything the pipeline is unsure about — an unparseable live type, an
@@ -26,6 +26,9 @@ use Nandan108\AttrecordMigrations\Plan\PlannedChange;
  *
  * Renames are never inferred: only a `#[Column(renamedFrom: 'old')]` declaration produces a
  * data-preserving rename (prior art is unanimous that drop+add similarity inference is a trap).
+ *
+ * @see the design contract — the design contract this implements.
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class SchemaDiffer
 {
@@ -306,7 +309,7 @@ final class SchemaDiffer
     }
 
     /**
-     * Classify a column modification from its drifted facets (arch-migrations.md §3.1): pure
+     * Classify a column modification from its drifted facets (the design contract §3.1): pure
      * widenings and default changes are Safe; nullable tightening and any narrowing/conversion is
      * Destructive (a failed conversion aborts loudly — nothing is ever silently coerced by *this*
      * package; engine-level coercion is exactly why the opt-in exists).

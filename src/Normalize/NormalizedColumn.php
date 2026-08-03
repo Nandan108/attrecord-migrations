@@ -6,11 +6,13 @@ namespace Nandan108\AttrecordMigrations\Normalize;
 
 /**
  * A normalization outcome: either a canonical {@see ColumnTuple}, or an explicit "unsure" with a
- * human-readable reason. The unsure branch is the design's escape valve (arch-migrations.md §4.2):
+ * human-readable reason. The unsure branch is the design's escape valve (the design contract §4.2):
  * anything a normalizer cannot confidently reduce degrades to a Manual-classified diff — never to
  * a guessed ALTER.
  *
  * @psalm-suppress PossiblyUnusedProperty Public data surface — read by the differ and by consumers.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class NormalizedColumn
 {

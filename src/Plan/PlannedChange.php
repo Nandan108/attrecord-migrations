@@ -10,6 +10,8 @@ namespace Nandan108\AttrecordMigrations\Plan;
  * part of the contract, because a plan is an inspection surface first and a script second.
  *
  * @psalm-suppress PossiblyUnusedProperty Public data surface — read by the applier and by consumers.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class PlannedChange
 {
@@ -27,7 +29,7 @@ final class PlannedChange
         /**
          * True when the change is Safe but can loudly reject existing rows (ADD UNIQUE on
          * duplicate data, ADD FK on orphans, NOT NULL tightening): an atomic failure, never
-         * silent loss — see arch-migrations.md §3.1.
+         * silent loss — see the design contract §3.1.
          */
         public readonly bool $mayRejectExistingRows = false,
     ) {

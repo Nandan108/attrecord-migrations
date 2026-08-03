@@ -12,7 +12,10 @@ use Nandan108\AttrecordMigrations\Live\LiveTable;
  * (`information_schema` / `pg_catalog` / `PRAGMA`) into the {@see LiveTable} model.
  *
  * Implementations are read-only and side-effect free: `plan()`'s purity rests on that
- * (arch-migrations.md §3).
+ * (the design contract §3).
+ *
+ * @see the design contract — the design contract this implements.
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 interface SchemaIntrospector
 {

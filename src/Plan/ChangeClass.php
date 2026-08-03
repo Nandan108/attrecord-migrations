@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Nandan108\AttrecordMigrations\Plan;
 
 /**
- * Safety classification of a planned change (arch-migrations.md §3.1). `apply(allow:)` treats this
+ * Safety classification of a planned change (the design contract §3.1). `apply(allow:)` treats this
  * as a ceiling: Safe applies by default, Destructive only by explicit opt-in, and **Manual is never
  * auto-applied** — it exists to be *seen* (logged, surfaced in diagnostics), not executed.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 enum ChangeClass: string
 {

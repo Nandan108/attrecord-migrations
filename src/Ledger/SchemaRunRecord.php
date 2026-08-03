@@ -11,7 +11,7 @@ use Nandan108\Attrecord\Enum\ColumnType;
 use Nandan108\Attrecord\Record;
 
 /**
- * One converge run, for **forensics only** (arch-migrations.md §5.3): what did the upgrade execute
+ * One converge run, for **forensics only** (the design contract §5.3): what did the upgrade execute
  * on this site, when, and did it finish. The differ never reads this table — truth about the live
  * schema comes from the live schema. (The one ledger-authoritative table is
  * {@see SchemaStepRecord}, for run-once data steps.).
@@ -25,6 +25,8 @@ use Nandan108\Attrecord\Record;
  * @api
  *
  * @psalm-suppress PossiblyUnusedProperty Public forensic surface.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 #[Table(name: 'attrecord_schema_runs')]
 #[Index('idx_started', columns: ['started_at'])]

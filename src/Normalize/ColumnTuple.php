@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Nandan108\AttrecordMigrations\Normalize;
 
 /**
- * The canonical comparison tuple (arch-migrations.md §4.2): both the attribute-derived desired
+ * The canonical comparison tuple (the design contract §4.2): both the attribute-derived desired
  * column and the introspected live column reduce to this shape — in the *same dialect's*
  * vocabulary — so equality is meaningful and every facet difference is nameable.
  *
@@ -15,6 +15,8 @@ namespace Nandan108\AttrecordMigrations\Normalize;
  * in a way it cannot represent, so collapsing on *both* sides loses nothing.
  *
  * @psalm-suppress PossiblyUnusedProperty Public data surface — read by the differ and by consumers.
+ *
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class ColumnTuple
 {

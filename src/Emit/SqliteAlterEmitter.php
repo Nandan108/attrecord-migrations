@@ -13,8 +13,11 @@ use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
  * SQLite ALTER wrappers — deliberately the smallest set. SQLite supports ADD COLUMN (3.x),
  * RENAME COLUMN (3.25+), DROP COLUMN (3.35+) and index DDL; it has **no** in-place column
  * modification and no FK add/drop — those need the table-rebuild dance, which is phase 2 of the
- * design (arch-migrations.md §4.4) and classifies **Manual** in v0.1: this emitter returns null
+ * design (the design contract §4.4) and classifies **Manual** in v0.1: this emitter returns null
  * and the differ surfaces the change without SQL.
+ *
+ * @see the design contract — the design contract this implements.
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class SqliteAlterEmitter implements AlterEmitter
 {

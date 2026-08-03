@@ -9,7 +9,7 @@ use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\Attrecord\SqlDialect;
 
 /**
- * Canonical hash of a desired model set (arch-migrations.md §5.3's fast path): a consumer stores
+ * Canonical hash of a desired model set (the design contract §5.3's fast path): a consumer stores
  * the last-converged fingerprint (its own option, or the ledger's) and skips even `plan()`'s
  * introspection when the running code's fingerprint matches.
  *
@@ -19,6 +19,9 @@ use Nandan108\Attrecord\SqlDialect;
  * class never declared: a schema built by {@see TableSchema::extendedWith()} hashes like any
  * other, so a consumer whose table shape depends on runtime data gets a fingerprint that moves
  * when that data does.
+ *
+ * @see the design contract — the design contract this implements.
+ * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
  */
 final class Fingerprint
 {
