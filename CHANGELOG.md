@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-06
+
+A dependency floor and nothing else: no public API change, no behaviour change.
+
+### Changed
+
+- **Requires `nandan108/attrecord` ^0.15** (was ^0.14).
+
+  Nothing here needs 0.15.0's feature (a backed enum case as a column default) — the diff pipeline
+  never sees one, because attrecord unwraps the case in `TableSchema::fromClass` and leaves
+  `ColumnDefinition::$default` typed `int|float|string|bool|null`. `TableSchema` is exactly the
+  boundary this package reads from, so `AbstractColumnNormalizer`'s `(string) $col->default` is
+  never handed a `\BackedEnum`.
+
+  The floor moves because the constraints have to stay satisfiable, not because the code does.
+  `^0.14` and `^0.15` are disjoint under caret semantics on 0.x, so a project depending on both this
+  package and a consumer already requiring attrecord ^0.15 could not resolve at all.
+
+  Verified against a real database rather than assumed: a Record declaring three enum-case defaults
+  — string-backed on an `Enum` column, string-backed on a `VarChar`, int-backed on a
+  `TinyIntUnsigned` — converges from empty and **re-plans empty**, with `DEFAULT 'active'` / `3` /
+  `'draft'` emitted as written. The golden invariant holds across the version change.
+
 ## [0.4.0] - 2026-07-29
 
 The other half of attrecord 0.14.0's composite primary keys. A table keyed on two columns can now
@@ -189,5 +212,9 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Nandan108/attrecord-migrations/releases/tag/v0.1.0
