@@ -72,6 +72,12 @@ final class MysqlAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
+    public function renameForeignKey(string $table, string $from, string $to): ?array
+    {
+        return null; // no RENAME CONSTRAINT on MySQL/MariaDB — the differ falls back to add + drop
+    }
+
+    #[\Override]
     public function addColumnRestriction(ColumnDefinition $col): ?string
     {
         return null;

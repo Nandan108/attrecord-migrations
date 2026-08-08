@@ -164,7 +164,11 @@ final class DependencyOrderTest extends TestCase
 
         self::assertSame(['ord_loop_b', 'ord_loop_a'], self::tableNames($resolution->schemas));
         self::assertTrue($resolution->hasDeferred());
-        self::assertSame(['fk_loop_b_a_id'], $resolution->deferredFor('ord_loop_b'));
+        // Read the constraint name from the schema rather than writing it out: attrecord 0.16
+        // changed the derivation (an unprefixed table is no longer stripped), and this suite
+        // supports both 0.15 and 0.16.
+        $deferredName = TableSchema::fromClass(OrdLoopBRecord::class)->foreignKeys[0]->constraintName;
+        self::assertSame([$deferredName], $resolution->deferredFor('ord_loop_b'));
         self::assertSame([], $resolution->deferredFor('ord_loop_a'), 'only one edge of the loop is deferred');
     }
 

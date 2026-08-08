@@ -9,6 +9,7 @@ use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
 use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\Attrecord\SqlDialect;
 use Nandan108\AttrecordMigrations\Emit\AlterEmitter;
+use Nandan108\AttrecordMigrations\Live\LiveForeignKey;
 use Nandan108\AttrecordMigrations\Live\LiveTable;
 use Nandan108\AttrecordMigrations\Normalize\ColumnNormalizer;
 use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
@@ -237,16 +238,26 @@ final class SchemaDiffer
         foreach ($desired->foreignKeys as $fk) {
             $desiredFks[$fk->constraintName] = $fk;
         }
+        // Unmatched-by-name entries are held back rather than emitted here: a constraint *rename*
+        // looks like an unrelated add plus an unrelated drop, and those classify differently (add is
+        // Safe, drop is Destructive), so emitting them independently lets a Safe-ceiling run apply
+        // half a rename — adding the new constraint while keeping the old one. They are paired up by
+        // shape below and emitted as one atomic change instead.
+        // array-key, not string: a numerically-named constraint (`1`, which is how some engines
+        // name an unnamed one) becomes an int key, so every read back out is cast — see above.
+        /** @var array<array-key, ForeignKeyDefinition> $pendingAdds */
+        $pendingAdds = [];
+        /** @var array<array-key, LiveForeignKey> $pendingDrops */
+        $pendingDrops = [];
+
         foreach ($desiredFks as $name => $fk) {
             $name = (string) $name; // numeric-string array key -> int; see above
             $liveFk = $live->foreignKeys[$name] ?? null;
-            $shape = [[$fk->localColumn], $fk->targetTableName(), [$fk->targetColumnName()], $fk->onDelete->value, $fk->onUpdate->value];
             if (null === $liveFk) {
-                $changes[] = $this->fkAdd($table, $name, $fk);
+                $pendingAdds[$name] = $fk;
                 continue;
             }
-            $liveShape = [$liveFk->localColumns, $liveFk->referencedTable, $liveFk->referencedColumns, self::canonAction($liveFk->onDelete), self::canonAction($liveFk->onUpdate)];
-            if ($liveShape !== [$shape[0], $shape[1], $shape[2], self::canonAction($shape[3]), self::canonAction($shape[4])]) {
+            if (self::liveFkShape($liveFk) !== self::desiredFkShape($fk)) {
                 $drop = $this->emitter->dropForeignKey($table, $name);
                 if (null === $drop) {
                     $changes[] = $this->manual($table, $name, 'foreign key differs but this engine cannot drop an FK in place (table rebuild — Manual in v0.1)');
@@ -256,19 +267,34 @@ final class SchemaDiffer
                 $changes[] = $this->fkAdd($table, $name, $fk, ChangeClass::Destructive);
             }
         }
-        foreach (array_keys($live->foreignKeys) as $name) {
-            $name = (string) $name; // numeric-string array key -> int; see above
-            if ($partiallyDeclared) {
-                break; // see PartiallyDeclared
-            }
-            if (!isset($desiredFks[$name])) {
-                $drop = $this->emitter->dropForeignKey($table, $name);
-                if (null === $drop) {
-                    $changes[] = $this->manual($table, $name, 'undeclared live foreign key; this engine cannot drop an FK in place');
-                    continue;
+        if (!$partiallyDeclared) {
+            foreach ($live->foreignKeys as $name => $liveFk) {
+                $name = (string) $name; // numeric-string array key -> int; see above
+                if (!isset($desiredFks[$name])) {
+                    $pendingDrops[$name] = $liveFk;
                 }
-                $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Destructive, $drop, 'foreign key exists live but is not declared');
             }
+        }
+
+        foreach ($pendingAdds as $newName => $fk) {
+            $newName = (string) $newName; // numeric-string array key -> int; see above
+            $oldName = self::soleShapeMatch($fk, $pendingDrops);
+            if (null === $oldName) {
+                $changes[] = $this->fkAdd($table, $newName, $fk);
+                continue;
+            }
+            unset($pendingDrops[$oldName]);
+            $changes[] = $this->fkRename($table, $oldName, $newName, $fk);
+        }
+
+        foreach (array_keys($pendingDrops) as $name) {
+            $name = (string) $name; // numeric-string array key -> int; see above
+            $drop = $this->emitter->dropForeignKey($table, $name);
+            if (null === $drop) {
+                $changes[] = $this->manual($table, $name, 'undeclared live foreign key; this engine cannot drop an FK in place');
+                continue;
+            }
+            $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Destructive, $drop, 'foreign key exists live but is not declared');
         }
 
         return $changes;
@@ -433,6 +459,104 @@ final class SchemaDiffer
             $class,
             $statements,
             'foreign key missing',
+            mayRejectExistingRows: true,
+        );
+    }
+
+    /**
+     * The identity of a foreign key *as a constraint*, independent of what it is called: local
+     * columns, target, and referential actions. Two keys with the same shape enforce the same rule.
+     *
+     * @return array{0: list<string>, 1: string, 2: list<string>, 3: string, 4: string}
+     */
+    private static function desiredFkShape(ForeignKeyDefinition $fk): array
+    {
+        return [
+            [$fk->localColumn],
+            $fk->targetTableName(),
+            [$fk->targetColumnName()],
+            self::canonAction($fk->onDelete->value),
+            self::canonAction($fk->onUpdate->value),
+        ];
+    }
+
+    /** @return array{0: list<string>, 1: string, 2: list<string>, 3: string, 4: string} */
+    private static function liveFkShape(LiveForeignKey $fk): array
+    {
+        return [
+            $fk->localColumns,
+            $fk->referencedTable,
+            $fk->referencedColumns,
+            self::canonAction($fk->onDelete),
+            self::canonAction($fk->onUpdate),
+        ];
+    }
+
+    /**
+     * The one live constraint that `$fk` is a rename of, or null.
+     *
+     * Null when nothing matches — an ordinary add — and **also when more than one does**. Two live
+     * keys of identical shape are already redundant with each other, so there is no fact of the
+     * matter about which one was renamed; guessing would drop an arbitrary constraint. Falling back
+     * to plain add/drop keeps that decision with the operator.
+     *
+     * @param array<array-key, LiveForeignKey> $candidates
+     */
+    private static function soleShapeMatch(ForeignKeyDefinition $fk, array $candidates): ?string
+    {
+        $shape = self::desiredFkShape($fk);
+        $found = null;
+        foreach ($candidates as $name => $live) {
+            if (self::liveFkShape($live) !== $shape) {
+                continue;
+            }
+            if (null !== $found) {
+                return null; // ambiguous
+            }
+            $found = (string) $name;
+        }
+
+        return $found;
+    }
+
+    /**
+     * A constraint rename, emitted as **one** change so a ceiling decision applies to all of it.
+     *
+     * PostgreSQL renames in the catalogue — instant, no validation — so it is `Safe`. MySQL and
+     * MariaDB have no `RENAME CONSTRAINT`, so the same outcome costs an `ADD FOREIGN KEY` that
+     * validates every existing row under a metadata lock, plus a `DROP`: real work on a large table,
+     * and not something to do unattended at boot, hence `Destructive`.
+     *
+     * The fallback adds **before** dropping, so the column is never left unconstrained — the window
+     * a drop-then-add ordering would open.
+     */
+    private function fkRename(string $table, string $from, string $to, ForeignKeyDefinition $fk): PlannedChange
+    {
+        $native = $this->emitter->renameForeignKey($table, $from, $to);
+        if (null !== $native) {
+            return new PlannedChange(
+                $table,
+                'rename_foreign_key',
+                $to,
+                ChangeClass::Safe,
+                $native,
+                sprintf('foreign key renamed from "%s" (same shape) — catalogue-only on this engine', $from),
+            );
+        }
+
+        $add = $this->emitter->addForeignKey($table, $fk);
+        $drop = $this->emitter->dropForeignKey($table, $from);
+        if ([] === $add || null === $drop) {
+            return $this->manual($table, $to, sprintf('foreign key renamed from "%s" but this engine cannot rename, add or drop an FK in place (table rebuild — Manual)', $from));
+        }
+
+        return new PlannedChange(
+            $table,
+            'rename_foreign_key',
+            $to,
+            ChangeClass::Destructive,
+            [...$add, ...$drop],
+            sprintf('foreign key renamed from "%s" (same shape); no RENAME CONSTRAINT on this engine, so it is added then dropped', $from),
             mayRejectExistingRows: true,
         );
     }

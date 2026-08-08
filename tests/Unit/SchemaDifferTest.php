@@ -93,6 +93,17 @@ final class SchemaDifferTest extends TestCase
     }
 
     /**
+     * The FK name attrecord derives for DiffBaseRecord — read from the schema rather than written
+     * out, because the derivation changed in attrecord 0.16 (the table prefix now contributes a
+     * digest, and an unprefixed table is no longer stripped). This suite supports both, so it must
+     * not hard-code either spelling.
+     */
+    private static function baseFkName(): string
+    {
+        return TableSchema::fromClass(DiffBaseRecord::class)->foreignKeys[0]->constraintName;
+    }
+
+    /**
      * A LiveTable matching DiffBaseRecord exactly (MySQL vocabulary), with overridable parts.
      *
      * @param array<array-key, LiveColumn>|null     $columns
@@ -116,7 +127,7 @@ final class SchemaDifferTest extends TestCase
                 'idx_name' => new LiveIndex('idx_name', ['name'], false),
             ],
             $fks ?? [
-                'fk_t_ref_id' => new LiveForeignKey('fk_t_ref_id', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+                self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
             ],
         );
     }
@@ -293,13 +304,94 @@ final class SchemaDifferTest extends TestCase
         $add = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(fks: [])), 'add_foreign_key');
         self::assertSame(ChangeClass::Safe, $add->class);
         self::assertTrue($add->mayRejectExistingRows);
-        self::assertStringContainsString('ADD CONSTRAINT `fk_t_ref_id` FOREIGN KEY (`ref_id`) REFERENCES `diff_ref` (`id`)', $add->statements[0]);
+        self::assertStringContainsString('ADD CONSTRAINT `'.self::baseFkName().'` FOREIGN KEY (`ref_id`) REFERENCES `diff_ref` (`id`)', $add->statements[0]);
     }
 
     public function testNoActionAndRestrictAreEquivalentFkActions(): void
     {
-        $fks = ['fk_t_ref_id' => new LiveForeignKey('fk_t_ref_id', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'NO ACTION')];
+        $fks = [self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'NO ACTION')];
         self::assertSame([], self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(fks: $fks)));
+    }
+
+    // ---- foreign-key renames ----
+    //
+    // A constraint rename reaches the differ as an unmatched desired name plus an unmatched live
+    // name. Emitted independently those classify differently — add is Safe, drop is Destructive —
+    // so a Safe-ceiling run would apply half a rename, adding the new constraint while keeping the
+    // old one. They are paired by shape and emitted as one change so a ceiling decision covers all
+    // of it.
+
+    /** The base live table with its FK renamed by hand — same shape, different name. */
+    private static function liveWithRenamedFk(string $name = 'fk_named_by_hand'): LiveTable
+    {
+        return self::liveBase(fks: [
+            $name => new LiveForeignKey($name, ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+        ]);
+    }
+
+    public function testRenamedForeignKeyIsOneDestructiveChangeOnMysql(): void
+    {
+        $changes = self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveWithRenamedFk());
+
+        $rename = self::only($changes, 'rename_foreign_key');
+        self::assertSame(ChangeClass::Destructive, $rename->class, 'ADD FOREIGN KEY validates every row under a lock — not Safe');
+        self::assertCount(1, $changes, 'the pair must not also appear as a separate add and drop');
+
+        // Add before drop: the column is never left unconstrained.
+        self::assertStringContainsString('ADD CONSTRAINT', $rename->statements[0]);
+        self::assertStringContainsString('DROP FOREIGN KEY', $rename->statements[1]);
+    }
+
+    public function testRenamedForeignKeyIsSafeOnPgsqlWhichRenamesNatively(): void
+    {
+        $dialect = new PgsqlDialect();
+        $differ = new SchemaDiffer(new PgsqlColumnNormalizer(), new PgsqlAlterEmitter($dialect), $dialect);
+
+        $rename = self::only($differ->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveWithRenamedFk()), 'rename_foreign_key');
+
+        // RENAME CONSTRAINT is a catalogue update — no validation, no rewrite — so it is Safe here
+        // even though the identical outcome is Destructive on MySQL.
+        self::assertSame(ChangeClass::Safe, $rename->class);
+        self::assertCount(1, $rename->statements);
+        self::assertStringContainsString('RENAME CONSTRAINT "fk_named_by_hand" TO', $rename->statements[0]);
+    }
+
+    public function testRenamedForeignKeyIsManualOnSqlite(): void
+    {
+        $dialect = new SqliteDialect();
+        $differ = new SchemaDiffer(new SqliteColumnNormalizer(), new SqliteAlterEmitter($dialect), $dialect);
+
+        $manual = self::only($differ->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveWithRenamedFk()), 'manual');
+        self::assertSame(ChangeClass::Manual, $manual->class);
+    }
+
+    public function testAmbiguousShapeMatchIsNotTreatedAsARename(): void
+    {
+        // Two live keys of identical shape are already redundant with each other, so there is no
+        // fact about which one was renamed. Guessing would drop an arbitrary constraint; the differ
+        // declines and leaves the decision with the operator as a plain add + drop.
+        $live = self::liveBase(fks: [
+            'fk_one' => new LiveForeignKey('fk_one', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+            'fk_two' => new LiveForeignKey('fk_two', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+        ]);
+
+        $kinds = array_map(static fn (PlannedChange $c): string => $c->kind, self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live));
+        self::assertNotContains('rename_foreign_key', $kinds);
+        self::assertContains('add_foreign_key', $kinds);
+        self::assertContains('drop_foreign_key', $kinds);
+    }
+
+    public function testDifferentShapeIsNotARename(): void
+    {
+        // Only the *name* may differ for this to be a rename. A different referential action is a
+        // genuinely different constraint, and must still be dropped and added on its own terms.
+        $live = self::liveBase(fks: [
+            'fk_named_by_hand' => new LiveForeignKey('fk_named_by_hand', ['ref_id'], 'diff_ref', ['id'], 'CASCADE', 'RESTRICT'),
+        ]);
+
+        $kinds = array_map(static fn (PlannedChange $c): string => $c->kind, self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live));
+        self::assertNotContains('rename_foreign_key', $kinds);
+        self::assertSame(['add_foreign_key', 'drop_foreign_key'], $kinds);
     }
 
     // ---- dialect-specific shapes ----
@@ -318,7 +410,7 @@ final class SchemaDifferTest extends TestCase
             'uniq_sku' => new LiveIndex('uniq_sku', ['sku'], true),
             'idx_name' => new LiveIndex('idx_name', ['name'], false),
         ], [
-            'fk_t_ref_id' => new LiveForeignKey('fk_t_ref_id', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'NO ACTION'),
+            self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'NO ACTION'),
         ]);
 
         $modify = self::only($differ->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live), 'modify_column');
@@ -343,7 +435,7 @@ final class SchemaDifferTest extends TestCase
             'uniq_sku' => new LiveIndex('uniq_sku', ['sku'], true),
             'idx_name' => new LiveIndex('idx_name', ['name'], false),
         ], [
-            'fk_t_ref_id' => new LiveForeignKey('fk_t_ref_id', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+            self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
         ]);
 
         $manual = self::only($differ->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live), 'manual');
@@ -400,8 +492,8 @@ final class SchemaDifferTest extends TestCase
                 'idx_extra' => new LiveIndex('idx_extra', ['name', 'dim_loc'], false),
             ],
             fks: [
-                'fk_t_ref_id' => new LiveForeignKey('fk_t_ref_id', ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
-                'fk_t_extra'  => new LiveForeignKey('fk_t_extra', ['dim_loc'], 'diff_dim', ['code'], 'RESTRICT', 'RESTRICT'),
+                self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+                'fk_t_extra'       => new LiveForeignKey('fk_t_extra', ['dim_loc'], 'diff_dim', ['code'], 'RESTRICT', 'RESTRICT'),
             ],
         );
     }

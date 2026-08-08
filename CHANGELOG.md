@@ -6,6 +6,70 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-08
+
+A constraint rename used to converge *halfway*. That is now one atomic change, classified by what it
+actually costs on each engine.
+
+### Added
+
+- **Foreign-key renames are detected by shape and applied atomically.** A rename reaches the differ
+  as an unmatched desired name plus an unmatched live name. Emitted separately those classify
+  differently — the add `Safe`, the drop `Destructive` — so at the default `Safe` ceiling the add
+  went through and the drop did not: the column ended up carrying **both** constraints, plus the
+  redundant index behind the second one, and the plan never re-planned empty.
+
+  Leftovers are now paired by **shape** — local columns, target table and columns, referential
+  actions — and emitted as a single `rename_foreign_key` change, so one ceiling decision covers both
+  statements. Measured against MariaDB, before and after:
+
+  ```
+  before   add_foreign_key   …  safe          -> applied
+           drop_foreign_key  …  destructive   -> skipped     = two constraints, plan never empty
+  after    rename_foreign_key … destructive   -> not applied = untouched; Destructive run converges,
+                                                               and re-plans empty
+  ```
+
+  Inferring a *constraint* rename does not contradict the standing rule that **column** renames must
+  be declared. A constraint holds no data and its shape fully determines what it enforces, so two
+  identical shapes under different names are provably the same constraint. A column rename is
+  refused precisely because there the data is the point and a wrong pairing destroys it.
+
+  **Classified per dialect, by real cost.** PostgreSQL has `ALTER TABLE … RENAME CONSTRAINT`, a
+  catalogue-only update: `Safe`, so an existing install self-heals on its next convergence. MySQL
+  and MariaDB have no equivalent, so the same outcome costs an `ADD FOREIGN KEY` that validates
+  every existing row under a metadata lock, plus a `DROP` — real work on a large table and not
+  something to do unattended at boot: `Destructive`. SQLite cannot address a constraint separately:
+  `Manual`. The MySQL fallback adds **before** dropping, so the column is never momentarily
+  unconstrained.
+
+  Pairing is **declined when ambiguous**: two live constraints of identical shape are already
+  redundant with each other, so there is no fact about which was renamed, and guessing would drop an
+  arbitrary one. That case falls back to plain add + drop, leaving the decision with the operator.
+
+### Changed
+
+- **Requires `nandan108/attrecord` `^0.15 || ^0.16`** (was `^0.15`).
+
+  attrecord 0.16.0 changes how FK constraint names are derived, which is exactly the drift this
+  release handles — so the union matters: it lets a consumer install this release **first**, while
+  still on 0.15, and upgrade attrecord afterwards with the rename handling already in place. A plain
+  `^0.16` would have forced both at once, and the very first convergence after that jump is the one
+  needing the protection.
+
+  Nothing here depends on 0.16: the feature works purely off live-versus-declared names. The suite
+  is verified green against both.
+
+- **`AlterEmitter` gains `renameForeignKey()`**, returning `null` on engines with no such operation
+  (MySQL, MariaDB, SQLite) so the differ falls back to add + drop. An external implementer of that
+  interface would need the new method — none are known.
+
+### Fixed
+
+- **Two unit fixtures no longer hard-code attrecord's FK constraint names**, reading them off the
+  schema instead. They encoded 0.15's spelling, which would have silently mis-tested against 0.16 —
+  in one case turning an "in sync, expect empty plan" assertion into an undetected rename.
+
 ## [0.4.1] - 2026-08-06
 
 A dependency floor and nothing else: no public API change, no behaviour change.
@@ -212,7 +276,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.2.0...v0.3.0

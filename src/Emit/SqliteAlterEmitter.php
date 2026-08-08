@@ -80,6 +80,12 @@ final class SqliteAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
+    public function renameForeignKey(string $table, string $from, string $to): ?array
+    {
+        return null; // constraints are not separately addressable — table rebuild, Manual
+    }
+
+    #[\Override]
     public function addColumnRestriction(ColumnDefinition $col): ?string
     {
         // SQLite's ADD COLUMN only accepts constant defaults — CURRENT_TIMESTAMP & co. are

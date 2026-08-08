@@ -119,6 +119,14 @@ final class PgsqlAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
+    public function renameForeignKey(string $table, string $from, string $to): ?array
+    {
+        // Catalogue-only: no row validation, no rewrite. The reason a rename is Safe here and
+        // Destructive on MySQL/MariaDB, which have to add and drop instead.
+        return ['ALTER TABLE '.$this->q($table).' RENAME CONSTRAINT '.$this->q($from).' TO '.$this->q($to)];
+    }
+
+    #[\Override]
     public function addColumnRestriction(ColumnDefinition $col): ?string
     {
         return null;

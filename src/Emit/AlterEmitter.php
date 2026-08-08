@@ -52,6 +52,19 @@ interface AlterEmitter
     public function dropForeignKey(string $table, string $name): ?array;
 
     /**
+     * Rename a constraint in place, or null when the engine has no such operation.
+     *
+     * Only PostgreSQL does (`ALTER TABLE … RENAME CONSTRAINT`), and there it is a metadata-only
+     * catalogue update — instant, no row validation, no rewrite. MySQL and MariaDB have no
+     * equivalent, so the differ falls back to add-then-drop, which is a very different cost: `ADD
+     * FOREIGN KEY` validates every existing row under a metadata lock. That difference is why a
+     * rename is classified per dialect rather than globally.
+     *
+     * @return list<string>|null
+     */
+    public function renameForeignKey(string $table, string $from, string $to): ?array;
+
+    /**
      * Reason this column cannot be ADDed on this engine, or null when it can. (SQLite rejects
      * ADD COLUMN with a non-constant default; every engine needs a default or NULL for a
      * populated-table NOT NULL add — that global rule lives in the differ, this hook is for
