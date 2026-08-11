@@ -368,7 +368,7 @@ final class SchemaDiffer
                     break;
                 case 'precision':
                 case 'scale':
-                    if ($this->dimensionWidens($desired->precision, $live->precision) && $this->dimensionWidens($desired->scale, $live->scale)) {
+                    if (self::dimensionsWiden($desired, $live)) {
                         break;
                     }
                     $class = ChangeClass::Destructive;
@@ -426,9 +426,30 @@ final class SchemaDiffer
         return false;
     }
 
-    private function dimensionWidens(?int $desired, ?int $live): bool
+    /**
+     * Can every value the live column accepts still fit after the change?
+     *
+     * Precision and scale have to be judged **together**, because scale is carved *out of*
+     * precision: `DECIMAL(10,2) -> DECIMAL(10,4)` keeps ten digits but moves two across the point,
+     * so the integer range shrinks from eight digits to six and any value ≥ 1,000,000 is rejected.
+     * Judged apart, that reads as "scale grew, precision unchanged" — widening — and would be
+     * applied unattended at the `Safe` ceiling.
+     *
+     * So both must hold: the fractional digits must not shrink, and neither must the integer digits
+     * they leave behind.
+     *
+     * A null dimension is **zero, not unknown**. Both normalizers deliberately collapse an explicit
+     * 0 to null so that `datetime` and `datetime(0)` compare equal — which makes `datetime ->
+     * datetime(6)` a widening (0 → 6 fractional digits, every stored value preserved), where a
+     * null-means-unknown reading classified it Destructive.
+     */
+    private static function dimensionsWiden(ColumnTuple $desired, ColumnTuple $live): bool
     {
-        return $desired === $live || (null !== $desired && null !== $live && $desired >= $live);
+        $desiredScale = $desired->scale ?? 0;
+        $liveScale = $live->scale ?? 0;
+
+        return $desiredScale >= $liveScale
+            && (($desired->precision ?? 0) - $desiredScale) >= (($live->precision ?? 0) - $liveScale);
     }
 
     private static function intWidens(string $from, string $to): bool

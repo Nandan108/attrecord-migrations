@@ -63,6 +63,20 @@ final class DiffNotNullNoDefaultRecord extends Record
     public int $required_no_default = 0;
 }
 
+/** Precision/scale widening cases: a temporal precision and a decimal, on one table. */
+#[Table(name: 'diff_t')]
+final class DiffDimensionRecord extends Record
+{
+    #[Column(ColumnType::BigIntUnsigned, autoIncrement: true)]
+    public ?int $id = null;
+
+    #[Column(ColumnType::DateTime, precision: 6, nullable: true)]
+    public ?\DateTimeImmutable $seen_at = null;
+
+    #[Column(ColumnType::Decimal, precision: 12, scale: 2, nullable: true)]
+    public ?string $amount = null;
+}
+
 #[Table(name: 'diff_t')]
 final class DiffRenameRecord extends Record
 {
@@ -311,6 +325,69 @@ final class SchemaDifferTest extends TestCase
     {
         $fks = [self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'NO ACTION')];
         self::assertSame([], self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(fks: $fks)));
+    }
+
+    // ---- precision / scale ----
+    //
+    // Scale is carved out of precision, so the two must be judged together. A null dimension is
+    // zero, not unknown: both normalizers collapse an explicit 0 to null so `datetime` and
+    // `datetime(0)` compare equal.
+
+    /** The dimension table with `seen_at` and `amount` overridden to the given live SQL types. */
+    private static function liveDims(string $seenAt, string $amount): LiveTable
+    {
+        return new LiveTable('diff_t', [
+            'id'      => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
+            'seen_at' => new LiveColumn('seen_at', $seenAt, true, null, false),
+            'amount'  => new LiveColumn('amount', $amount, true, null, false),
+        ], ['id'], [], []);
+    }
+
+    /** @return array<string, ChangeClass> subject => class */
+    private static function dimClasses(LiveTable $live): array
+    {
+        $out = [];
+        foreach (self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffDimensionRecord::class), $live) as $c) {
+            if ('modify_column' === $c->kind) {
+                $out[$c->subject] = $c->class;
+            }
+        }
+
+        return $out;
+    }
+
+    public function testGainingFractionalSecondsIsSafe(): void
+    {
+        // datetime -> datetime(6): every stored value survives, it just gains capacity. Live
+        // precision is null, which means 0 here — reading it as "unknown" made this Destructive.
+        $classes = self::dimClasses(self::liveDims('datetime', 'decimal(12,2)'));
+        self::assertSame(ChangeClass::Safe, $classes['seen_at'] ?? null);
+        self::assertArrayNotHasKey('amount', $classes, 'the decimal did not drift');
+    }
+
+    public function testLosingFractionalSecondsIsDestructive(): void
+    {
+        // The mirror: datetime(9)-style precision down to 6 truncates. (Live 7 > desired 6.)
+        $classes = self::dimClasses(self::liveDims('datetime(7)', 'decimal(12,2)'));
+        self::assertSame(ChangeClass::Destructive, $classes['seen_at'] ?? null);
+    }
+
+    public function testDecimalWideningIsSafe(): void
+    {
+        // decimal(10,2) -> decimal(12,2): two more integer digits, fraction unchanged.
+        $classes = self::dimClasses(self::liveDims('datetime(6)', 'decimal(10,2)'));
+        self::assertSame(ChangeClass::Safe, $classes['amount'] ?? null);
+    }
+
+    public function testDecimalScaleGrowthThatShrinksTheIntegerPartIsDestructive(): void
+    {
+        // decimal(12,4) -> decimal(12,2) shrinks the fraction — plainly Destructive. The subtler
+        // direction is the one judged wrongly when the facets are read apart: growing scale within
+        // a fixed precision moves digits across the point, so the integer range shrinks and large
+        // values are rejected. Here live decimal(12,0) -> desired decimal(12,2): twelve integer
+        // digits become ten.
+        $classes = self::dimClasses(self::liveDims('datetime(6)', 'decimal(12,0)'));
+        self::assertSame(ChangeClass::Destructive, $classes['amount'] ?? null);
     }
 
     // ---- foreign-key renames ----

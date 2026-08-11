@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-08
+
+Two misclassifications of a precision/scale change, in opposite directions. Both came from judging
+`precision` and `scale` as independent facets.
+
+### Fixed
+
+- **`datetime` → `datetime(6)` was classified `Destructive`.** Gaining fractional-second digits
+  preserves every stored value, so it is a widening. A null dimension was being read as "unknown,
+  assume the worst", but null means **zero** here: both normalizers deliberately collapse an
+  explicit `0` to null so that `datetime` and `datetime(0)` compare equal. The comparison was
+  therefore `6 >= 0` all along.
+
+  Only the classification was wrong — the ALTER itself was correct, and would have been applied by
+  any run at the `Destructive` ceiling.
+
+- **`decimal(12,0)` → `decimal(12,2)` was classified `Safe`, and it is not.** Scale is carved *out
+  of* precision, so growing it within a fixed precision moves digits across the point: the integer
+  range falls from twelve digits to ten, and every value ≥ 10^10 is rejected by the ALTER. Judged
+  facet-by-facet that reads as "scale grew, precision unchanged" — a widening — so it passed the
+  gate and would have been applied unattended at the default ceiling.
+
+  This was the more serious of the two: the first is over-caution, this one let a data-rejecting
+  change through the ceiling that exists to stop it.
+
+  The two facets are now judged together, which is the only way to state the rule: the fractional
+  digits must not shrink, **and** neither must the integer digits they leave behind. So
+  `decimal(10,2)` → `decimal(12,4)` stays `Safe` (eight integer digits either side, fraction grows)
+  while `decimal(12,0)` → `decimal(12,2)` is `Destructive`.
+
 ## [0.5.0] - 2026-08-08
 
 A constraint rename used to converge *halfway*. That is now one atomic change, classified by what it
@@ -276,7 +306,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.3.0...v0.4.0
