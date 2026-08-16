@@ -318,9 +318,34 @@ final class SchemaDiffer
             return [];
         }
 
-        // Facets the pipeline refuses to auto-resolve.
-        if (\in_array('autoIncrement', $facets, true) || \in_array('generated', $facets, true)) {
-            return [$this->manual($table, $col->name, 'auto-increment / generation-expression drift — never auto-applied (facets: '.implode(', ', $facets).')')];
+        // A changed generation expression is Assisted, not Manual: the statement is a plain MODIFY
+        // and the emitter has everything it needs, but rebuilding a generated column across a
+        // populated table is a decision, not a policy. Both spellings go in the reason so an
+        // operator can see *what* differs — and so a rewrite that is not a real change, one the
+        // normalizer failed to absorb, is recognisable at a glance rather than chased.
+        if (\in_array('generated', $facets, true)) {
+            $statements = $this->emitter->modifyColumn($table, $col, $desired, $facets);
+            if (null === $statements) {
+                return [$this->manual($table, $col->name, 'generation expression differs, and this engine has no in-place column modification (rebuild — Manual)')];
+            }
+
+            return [new PlannedChange(
+                $table,
+                'modify_column',
+                $col->name,
+                ChangeClass::Assisted,
+                $statements,
+                sprintf(
+                    'generation expression differs — declared "%s", live "%s"',
+                    $desired->generated ?? '',
+                    $liveTuple->generated ?? '',
+                ),
+            )];
+        }
+        // Auto-increment stays Manual: unlike the expression above there is no single statement
+        // that adopts it safely — the right move depends on the sequence's current value.
+        if (\in_array('autoIncrement', $facets, true)) {
+            return [$this->manual($table, $col->name, 'auto-increment drift — never auto-applied (facets: '.implode(', ', $facets).')')];
         }
 
         $statements = $this->emitter->modifyColumn($table, $col, $desired, $facets);

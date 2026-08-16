@@ -38,15 +38,30 @@ final class ColumnTupleTest extends TestCase
         );
     }
 
-    public function testGeneratedColumnsIgnoreNullabilityAndExpressionDifferences(): void
+    public function testGeneratedColumnsIgnoreNullabilityDifferences(): void
     {
-        // What the attributes describe vs. what MariaDB hands back for the same column: it
-        // re-spells the expression and reports the column as nullable regardless.
-        $desired = self::tuple(nullable: false, generated: '(closed_at is null)');
-        $live = self::tuple(nullable: true, generated: '`closed_at` is null');
+        // MariaDB reports a generated column as nullable whatever the declaration said, so that
+        // facet stays skipped. The expressions here are what the *normalizer* produces for the
+        // same column on both sides — engine re-spelling is absorbed before this comparison, not
+        // by it (see ColumnNormalizerTest).
+        $desired = self::tuple(nullable: false, generated: 'closed_atisnull');
+        $live = self::tuple(nullable: true, generated: 'closed_atisnull');
 
         self::assertSame([], $desired->diffFacets($live));
         self::assertTrue($desired->equals($live));
+    }
+
+    public function testGeneratedExpressionChangeIsReported(): void
+    {
+        // A genuinely changed expression must surface. It was previously skipped, which meant a
+        // corrected expression produced no planned change at all: the repair reached new installs
+        // and no existing one. The differ routes this facet to Manual — reported, never
+        // auto-applied.
+        $desired = self::tuple(generated: 'greatest(0,cast(aassigned)-cast(bassigned))');
+        $live = self::tuple(generated: 'greatest(0,a-b)');
+
+        self::assertSame(['generated'], $desired->diffFacets($live));
+        self::assertFalse($desired->equals($live));
     }
 
     public function testGeneratedColumnsStillCompareEveryOtherFacet(): void

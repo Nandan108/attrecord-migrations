@@ -103,7 +103,35 @@ abstract class AbstractColumnNormalizer implements ColumnNormalizer
             return null;
         }
 
-        return strtolower(str_replace(['`', '"', ' ', "\t", "\n"], '', $expr));
+        return self::stripRedundantParens(strtolower(str_replace(['`', '"', ' ', "\t", "\n"], '', $expr)));
+    }
+
+    /**
+     * Drop parentheses that wrap the *whole* expression.
+     *
+     * Engines discard a redundant outer pair when they store the expression — a column declared
+     * `(closed_at IS NULL)` reads back as `closed_at is null` — so without this the declared and
+     * live forms of an unchanged column differ by nothing but those brackets. That difference is
+     * meaningless, and it is the kind of false drift that makes an expression comparison look
+     * unusable when the underlying idea is sound.
+     *
+     * Only a pair enclosing everything is removed, and only while it stays balanced throughout:
+     * `(a)-(b)` opens and closes before the end, so its brackets are load-bearing and are kept.
+     */
+    private static function stripRedundantParens(string $expr): string
+    {
+        while (\strlen($expr) > 1 && str_starts_with($expr, '(') && str_ends_with($expr, ')')) {
+            $depth = 0;
+            for ($i = 0, $n = \strlen($expr); $i < $n; ++$i) {
+                $depth += ('(' === $expr[$i] ? 1 : (')' === $expr[$i] ? -1 : 0));
+                if (0 === $depth && $i < $n - 1) {
+                    return $expr; // the opening bracket closed early — not a wrapper
+                }
+            }
+            $expr = substr($expr, 1, -1);
+        }
+
+        return $expr;
     }
 
     /** Parse the members out of a MySQL-style `enum('a','b')` / `set('a','b')` type string. */

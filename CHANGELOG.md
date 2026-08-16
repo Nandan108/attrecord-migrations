@@ -6,6 +6,54 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-16
+
+A changed generation expression was invisible, and the one class that could have reported it could
+never be applied. Both halves are addressed: it is now detected, and it is now applicable by someone
+who chooses to.
+
+### Added
+
+- **`ChangeClass::Assisted` — the statement is known, but only a person runs it.** `Manual` was two
+  things wearing one label: changes with *no safe statement* (a changed primary key, a SQLite column
+  rebuild) and changes whose statement is perfectly well known but too consequential to run
+  unattended. Only the second kind can be offered to an operator as "here is the exact SQL, apply
+  it", and conflating them meant it could not be — `Manual` carries no statements, so there was
+  nothing to run.
+
+  The ceiling is now a ladder, `Safe → Destructive → Assisted`, each admitting everything at or
+  below it. `Manual` is off the ladder rather than at the top: `withinCeiling()` returns false for
+  it against *every* ceiling, because there is no SQL to authorise. And `Assisted` is deliberately
+  **not** reached by opting into `Destructive` — widening a destructive policy must not sweep in
+  changes whose whole point is that somebody chose them.
+
+  `Plan::hasAssisted()` joins `hasDestructive()`/`hasManual()`, and `hasBeyondSafe()` accounts for
+  it — an Assisted-only plan previously reported nothing beyond Safe.
+
+### Fixed
+
+- **A changed generation expression is detected again, and is `Assisted`.** The `generated` facet
+  was skipped whenever both sides were generated columns, a documented fail-safe: engines store
+  their own rewriting of what you wrote, so a textual comparison drifted against a table that was in
+  fact exactly as declared.
+
+  The price only came due later. A corrected expression produced **no planned change at all**, so
+  the repair reached new installs and no existing one — silently, indefinitely, with the old column
+  left in place on every upgraded site. That was found downstream the hard way: an unsigned
+  generated column whose arithmetic could underflow left its table permanently un-`ALTER`-able, and
+  fixing the declaration changed nothing on any database that already had it.
+
+  The expression is now compared. `looseExpr()` additionally strips a redundant *outer* bracket pair
+  before comparing — engines drop one when storing, so `(closed_at IS NULL)` read back as
+  `closed_at is null` and differed by nothing but brackets. Brackets that open and close before the
+  end are load-bearing and kept, so `(a)-(b)` survives. Measured against MariaDB across the
+  generated-column shapes in a real consumer, declared and live now normalize identically for
+  unchanged columns.
+
+  A genuine difference is reported as `Assisted` with the `MODIFY COLUMN` that adopts it, and the
+  reason quotes **both** spellings — so an operator can judge whether the difference is real, and a
+  normalization gap is recognisable at a glance rather than chased.
+
 ## [0.5.1] - 2026-08-08
 
 Two misclassifications of a precision/scale change, in opposite directions. Both came from judging
@@ -306,7 +354,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.0...v0.4.1

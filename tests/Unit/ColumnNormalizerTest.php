@@ -19,9 +19,9 @@ use PHPUnit\Framework\TestCase;
  */
 final class ColumnNormalizerTest extends TestCase
 {
-    private static function live(string $rawType, ?string $rawDefault = null, bool $nullable = false, bool $ai = false): LiveColumn
+    private static function live(string $rawType, ?string $rawDefault = null, bool $nullable = false, bool $ai = false, ?string $generated = null): LiveColumn
     {
-        return new LiveColumn('c', $rawType, $nullable, $rawDefault, $ai);
+        return new LiveColumn('c', $rawType, $nullable, $rawDefault, $ai, $generated);
     }
 
     private static function tuple(MysqlColumnNormalizer | PgsqlColumnNormalizer | SqliteColumnNormalizer $n, LiveColumn $col): ColumnTuple
@@ -123,5 +123,22 @@ final class ColumnNormalizerTest extends TestCase
         self::assertSame('-5', self::tuple($n, self::live('INTEGER', '-05'))->default);
         // Non-numeric families keep the literal untouched.
         self::assertSame('0.00', self::tuple($n, self::live('TEXT', "'0.00'"))->default);
+    }
+
+    public function testGenerationExpressionAbsorbsEngineRespelling(): void
+    {
+        // The declared form and the engine's stored form of the *same* column must normalize
+        // identically, or every generated column reads as permanently drifted. Engines drop a
+        // redundant outer bracket pair and quote identifiers; both are absorbed here, which is
+        // what lets the expression be compared at all rather than skipped.
+        $n = new MysqlColumnNormalizer();
+        $declared = self::tuple($n, self::live('tinyint(1)', null, true, generated: '(`closed_at` IS NULL)'));
+        $live = self::tuple($n, self::live('tinyint(1)', null, true, generated: 'closed_at is null'));
+        self::assertSame($declared->generated, $live->generated);
+
+        // Brackets that are load-bearing survive: they open and close before the end, so the
+        // expression is not merely wrapped.
+        $paired = self::tuple($n, self::live('int(11)', null, true, generated: '(a)-(b)'));
+        self::assertSame('(a)-(b)', $paired->generated);
     }
 }

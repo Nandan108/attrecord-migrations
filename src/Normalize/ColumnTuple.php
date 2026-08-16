@@ -57,15 +57,17 @@ final class ColumnTuple
      * - *nullability* — MySQL and MariaDB report a generated column as nullable unless it was
      *   explicitly declared `NOT NULL`, whatever the declaration implied. Comparing it makes
      *   every generated column read as permanently drifted the moment it is created.
-     * - *the expression itself* — engines store their own rewriting of what you wrote
-     *   (`(a IS NULL AND b IS NULL)` comes back as `` `a` is null and `b` is null ``), so a
-     *   textual comparison drifts against a table that is in fact exactly as declared.
-     *   {@see MysqlColumnNormalizer::looseExpr()} absorbs case, quoting and whitespace, but not
-     *   an engine that reassociates or re-spells the expression.
+     * The *expression* is compared, and a difference is always routed to **Manual** — never an
+     * automatic ALTER. Engines store their own rewriting of what you wrote, so
+     * {@see AbstractColumnNormalizer::looseExpr()} absorbs case, quoting, whitespace and a
+     * redundant outer bracket pair before comparing. That is enough for the shapes seen in
+     * practice, and where it is not, the cost is a visible advisory naming the column rather than
+     * a wrong statement.
      *
-     * The consequence — a *changed* generation expression is not detected — is the fail-safe
-     * direction and is documented as a limitation. A column gaining or losing generation
-     * entirely is still caught: only one side is generated then, so the facet is compared.
+     * Skipping it instead — the earlier behaviour — bought silence at a price only paid later: a
+     * corrected expression produced *no planned change at all*, so the repair reached new installs
+     * and no existing one, indefinitely and without a word. Between a false Manual and a silent
+     * non-repair, this package's bias points at the one that speaks.
      *
      * *Members* are skipped when **either** side is null, null meaning "cannot see the members"
      * rather than "has none". It is the same fail-safe direction, and here it is load-bearing: on
@@ -94,7 +96,7 @@ final class ColumnTuple
             'generated'     => [$this->generated, $other->generated],
             'members'       => [$this->members, $other->members],
         ] as $facet => [$a, $b]) {
-            if ($bothGenerated && ('nullable' === $facet || 'generated' === $facet)) {
+            if ($bothGenerated && 'nullable' === $facet) {
                 continue;
             }
             if ('members' === $facet && (null === $a || null === $b)) {

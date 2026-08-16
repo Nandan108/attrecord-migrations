@@ -14,6 +14,7 @@ use Nandan108\Attrecord\Dialect\PgsqlDialect;
 use Nandan108\Attrecord\Dialect\SqliteDialect;
 use Nandan108\Attrecord\Enum\ColumnType;
 use Nandan108\Attrecord\Enum\ForeignKeyAction;
+use Nandan108\Attrecord\Enum\GeneratedColumnMode;
 use Nandan108\Attrecord\Record;
 use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\AttrecordMigrations\Diff\SchemaDiffer;
@@ -75,6 +76,27 @@ final class DiffDimensionRecord extends Record
 
     #[Column(ColumnType::Decimal, precision: 12, scale: 2, nullable: true)]
     public ?string $amount = null;
+}
+
+/** A generated column, for the changed-expression case. */
+#[Table(name: 'diff_t')]
+final class DiffGeneratedRecord extends Record
+{
+    #[Column(ColumnType::BigIntUnsigned, autoIncrement: true)]
+    public ?int $id = null;
+
+    #[Column(ColumnType::SmallIntUnsigned, default: 0)]
+    public int $a = 0;
+
+    #[Column(ColumnType::SmallIntUnsigned, default: 0)]
+    public int $b = 0;
+
+    #[Column(
+        ColumnType::SmallIntUnsigned,
+        generatedAs: 'GREATEST(0, CAST(a AS SIGNED) - CAST(b AS SIGNED))',
+        generatedMode: GeneratedColumnMode::Virtual,
+    )]
+    public int $gen = 0;
 }
 
 #[Table(name: 'diff_t')]
@@ -388,6 +410,33 @@ final class SchemaDifferTest extends TestCase
         // digits become ten.
         $classes = self::dimClasses(self::liveDims('datetime(6)', 'decimal(12,0)'));
         self::assertSame(ChangeClass::Destructive, $classes['amount'] ?? null);
+    }
+
+    public function testChangedGenerationExpressionIsAssistedAndCarriesItsSql(): void
+    {
+        // The statement is known — a plain MODIFY — so this is Assisted, not Manual: an operator
+        // who has taken a backup can apply it. Manual would carry no SQL, leaving nothing to press.
+        $live = self::liveDims('datetime(6)', 'decimal(12,2)');
+        $cols = $live->columns;
+        $cols['seen_at'] = new LiveColumn('seen_at', 'datetime(6)', true, null, false);
+        $cols['gen'] = new LiveColumn('gen', 'smallint(5) unsigned', true, null, false, 'greatest(0,`a` - `b`)');
+
+        $change = self::only(
+            self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffGeneratedRecord::class), new LiveTable('diff_t', [
+                'id'  => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
+                'a'   => new LiveColumn('a', 'smallint(5) unsigned', false, '0', false),
+                'b'   => new LiveColumn('b', 'smallint(5) unsigned', false, '0', false),
+                'gen' => $cols['gen'],
+            ], ['id'], [], [])),
+            'modify_column',
+        );
+
+        self::assertSame(ChangeClass::Assisted, $change->class);
+        self::assertNotSame([], $change->statements, 'an Assisted change must carry the SQL that applies it');
+        self::assertStringContainsString('MODIFY COLUMN', $change->statements[0]);
+        // Both spellings are named so an operator can judge whether the difference is real.
+        self::assertStringContainsString('declared "', $change->reason);
+        self::assertStringContainsString('live "', $change->reason);
     }
 
     // ---- foreign-key renames ----

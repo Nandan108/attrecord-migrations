@@ -41,10 +41,16 @@ final class Plan
         return [] !== $this->byClass(ChangeClass::Manual);
     }
 
-    /** Anything beyond the default Safe ceiling — i.e. requiring opt-in or a human. */
+    /** Changes whose SQL is known but which only run under an explicit `Assisted` ceiling. */
+    public function hasAssisted(): bool
+    {
+        return [] !== $this->byClass(ChangeClass::Assisted);
+    }
+
+    /** Anything beyond the default Safe ceiling — i.e. requiring opt-in, a person, or both. */
     public function hasBeyondSafe(): bool
     {
-        return $this->hasDestructive() || $this->hasManual();
+        return $this->hasDestructive() || $this->hasAssisted() || $this->hasManual();
     }
 
     /**

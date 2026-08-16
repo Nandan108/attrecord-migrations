@@ -44,13 +44,30 @@ final class PlanTest extends TestCase
 
     public function testCeilingSemantics(): void
     {
-        // Safe runs under any ceiling; Destructive only under the Destructive ceiling;
-        // Manual never runs, whatever the ceiling.
+        // The ladder: Safe → Destructive → Assisted, each ceiling admitting everything at or below.
         self::assertTrue(ChangeClass::Safe->withinCeiling(ChangeClass::Safe));
         self::assertTrue(ChangeClass::Safe->withinCeiling(ChangeClass::Destructive));
+        self::assertTrue(ChangeClass::Safe->withinCeiling(ChangeClass::Assisted));
         self::assertFalse(ChangeClass::Destructive->withinCeiling(ChangeClass::Safe));
         self::assertTrue(ChangeClass::Destructive->withinCeiling(ChangeClass::Destructive));
-        self::assertFalse(ChangeClass::Manual->withinCeiling(ChangeClass::Destructive));
-        self::assertFalse(ChangeClass::Manual->withinCeiling(ChangeClass::Manual));
+        self::assertTrue(ChangeClass::Destructive->withinCeiling(ChangeClass::Assisted));
+    }
+
+    public function testAssistedNeedsItsOwnCeiling(): void
+    {
+        // Assisted is not reached by opting into Destructive: the point of the class is that
+        // someone chose it specifically, so widening the destructive policy must not sweep it in.
+        self::assertFalse(ChangeClass::Assisted->withinCeiling(ChangeClass::Safe));
+        self::assertFalse(ChangeClass::Assisted->withinCeiling(ChangeClass::Destructive));
+        self::assertTrue(ChangeClass::Assisted->withinCeiling(ChangeClass::Assisted));
+    }
+
+    public function testManualNeverRunsUnderAnyCeiling(): void
+    {
+        // Manual is off the ladder rather than at the top of it: it carries no statements, so
+        // there is nothing a higher ceiling could authorise.
+        foreach (ChangeClass::cases() as $ceiling) {
+            self::assertFalse(ChangeClass::Manual->withinCeiling($ceiling), "ceiling {$ceiling->value}");
+        }
     }
 }

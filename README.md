@@ -57,6 +57,7 @@ foreach ($plan->changes as $c) {  // inspectable: SQL + classification + reason
 
 $migrator->apply($plan);                                   // Safe changes only (default)
 $migrator->apply($plan, allow: ChangeClass::Destructive);  // opt-in escalation
+$migrator->apply($plan, allow: ChangeClass::Assisted);     // everything with a statement
 ```
 
 A converged database re-plans **empty** — that invariant (create → introspect → identical
@@ -64,13 +65,15 @@ canonical tuples on both sides) is pinned by the test suite on all three backend
 
 ## Change classes — the safety model
 
-Every planned change carries a class; `apply(allow:)` is a **ceiling**:
+Every planned change carries a class; `apply(allow:)` is a **ceiling** over the ladder
+`Safe → Destructive → Assisted`, each admitting everything at or below it:
 
 | Class | Applied | Examples |
 | --- | --- | --- |
 | `Safe` (default) | yes | `ADD COLUMN` (nullable/defaulted), `ADD INDEX`, widenings (`VARCHAR(64)→(191)`, `SMALLINT→INT`), default changes, declared renames. `ADD UNIQUE`/`ADD FK` are Safe but flagged `mayRejectExistingRows` — they can *loudly* reject (atomic failure, never silent loss). |
 | `Destructive` | opt-in only | `DROP COLUMN`, narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index drops. |
-| `Manual` | **never** | PK changes, auto-increment/generation drift, anything the pipeline is *unsure* about, SQLite rebuild-only changes. No SQL — a reason to read, not a statement to run. |
+| `Assisted` | opt-in, its own ceiling | A changed generation expression. The statement is known and carried; what it needs is a person who read it and said yes. **Not** reached by opting into `Destructive` — a widened destructive policy must not sweep in changes chosen deliberately. |
+| `Manual` | **never** | PK changes, auto-increment drift, anything the pipeline is *unsure* about, SQLite rebuild-only changes. No SQL — a reason to read, not a statement to run, which is why no ceiling admits it. |
 
 The pipeline's bias is **fail-safe**: an unparseable live type or ambiguous facet degrades to
 Manual with a reason. It never guesses an ALTER (the Doctrine `schema-tool:update` lesson —
