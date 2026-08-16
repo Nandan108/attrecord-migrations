@@ -43,12 +43,15 @@ who chooses to.
   generated column whose arithmetic could underflow left its table permanently un-`ALTER`-able, and
   fixing the declaration changed nothing on any database that already had it.
 
-  The expression is now compared. `looseExpr()` additionally strips a redundant *outer* bracket pair
-  before comparing — engines drop one when storing, so `(closed_at IS NULL)` read back as
-  `closed_at is null` and differed by nothing but brackets. Brackets that open and close before the
-  end are load-bearing and kept, so `(a)-(b)` survives. Measured against MariaDB across the
-  generated-column shapes in a real consumer, declared and live now normalize identically for
-  unchanged columns.
+  The expression is now compared, and the comparison absorbs the bracketing each engine adds or
+  drops when it re-prints what you declared. MariaDB discards a redundant outer pair, so
+  `(closed_at IS NULL)` reads back as `closed_at is null`; MySQL adds one around a compound function
+  argument, so `GREATEST(0, a - b)` reads back as `greatest(0,(a - b))`. `looseExpr()` removes a
+  bracket pair only where **no operator can bind across it** — its neighbours are a bracket, a comma,
+  or the ends of the string — which is exactly those two cases and nothing else. `(a+b)*c` keeps the
+  brackets that make it what it is, and brackets inside a string literal are read as text. Verified
+  against MariaDB 11.8, MySQL 8.0 and MySQL 8.4: declared and live now normalize identically for
+  every unchanged column.
 
   A genuine difference is reported as `Assisted` with the `MODIFY COLUMN` that adopts it, and the
   reason quotes **both** spellings — so an operator can judge whether the difference is real, and a

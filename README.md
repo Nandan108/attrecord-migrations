@@ -187,7 +187,7 @@ final class MyRunRecord extends SchemaRunRecord {}
 $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
 ```
 
-## Limitations (all fail LOUD as `Manual`, never silently wrong)
+## Limitations (all fail LOUD as `Manual` or `Assisted`, never silently wrong)
 
 - **SQLite**: no in-place column modification and no FK add/drop — those changes classify Manual
   (the table-rebuild dance is phase 2). `ADD COLUMN` with a non-constant default likewise. This
@@ -208,11 +208,17 @@ $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
   three backends), not alterable.
 - **MySQL-family `json`** folds to `longtext` (MariaDB stores JSON as LONGTEXT) — json↔longtext
   drift is undetectable there.
-- **Generated columns** are compared on every facet *except* nullability and the expression
-  itself — both of which the engine owns rather than the declaration (it reports them nullable
-  whatever you wrote, and stores its own spelling of the expression). Comparing either would make
-  a correct database report drift forever. The cost: a *changed* generation expression is not
-  detected. A column gaining or losing generation entirely still is.
+- **Generated columns** are compared on every facet except **nullability**, which the engine owns
+  outright — it reports the column nullable whatever you wrote, so comparing it would make a
+  correct database report drift forever.
+
+  The **expression** is compared, against the engine's own re-printing of it rather than your
+  spelling: identifier quoting and whitespace are dropped, and bracket pairs are removed where no
+  operator can bind across them (MariaDB drops the outer pair you wrote, MySQL adds one around a
+  compound function argument — neither means anything). Brackets that group are kept and compared.
+  A difference the canon cannot absorb is reported `Assisted` with *both* spellings quoted, so a
+  normalization gap looks like one at a glance instead of like a schema change; adopting it is
+  harmless either way. A column gaining or losing generation entirely is a plain modification.
 - `ON UPDATE CURRENT_TIMESTAMP` drift and PostgreSQL `BIT` round-trips are not compared.
 - Tables the Records don't declare are **invisible** — never dropped, never touched.
 - An index whose leading columns are a foreign key's columns is treated as that FK's supporting

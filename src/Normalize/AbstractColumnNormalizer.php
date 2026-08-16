@@ -107,31 +107,98 @@ abstract class AbstractColumnNormalizer implements ColumnNormalizer
     }
 
     /**
-     * Drop parentheses that wrap the *whole* expression.
+     * Drop bracket pairs that cannot change what the expression means.
      *
-     * Engines discard a redundant outer pair when they store the expression — a column declared
-     * `(closed_at IS NULL)` reads back as `closed_at is null` — so without this the declared and
-     * live forms of an unchanged column differ by nothing but those brackets. That difference is
-     * meaningless, and it is the kind of false drift that makes an expression comparison look
-     * unusable when the underlying idea is sound.
+     * An engine stores its own re-printing of the expression, and each one brackets to its own
+     * taste. MariaDB drops a redundant outer pair, so `(closed_at IS NULL)` reads back as
+     * `closed_at is null`; MySQL adds one around a compound function argument, so
+     * `GREATEST(0, a - b)` reads back as `greatest(0,(a - b))`. Neither difference means anything,
+     * and both would otherwise read as drift on a column that is exactly as declared.
      *
-     * Only a pair enclosing everything is removed, and only while it stays balanced throughout:
-     * `(a)-(b)` opens and closes before the end, so its brackets are load-bearing and are kept.
+     * A pair is removed only where **no operator can bind across it**, which is the one case where
+     * removal is safe without knowing SQL's precedence table: when the characters immediately
+     * either side are a bracket, a comma, or the ends of the string. That covers a whole
+     * expression, `(a)`, and a complete function argument, `f(x,(a-b))` — and refuses everything
+     * else, so `(a+b)*c` keeps the brackets that make it what it is, and `(a)-(b)` is left alone.
+     * Nested pairs come off one at a time until none qualifies.
+     *
+     * Brackets inside a string literal are text, not structure, so literals are skipped over
+     * (doubled quotes and all). An unbalanced expression is returned untouched — it is not ours to
+     * repair, and the differ reporting it as changed is the correct outcome.
      */
     private static function stripRedundantParens(string $expr): string
     {
-        while (\strlen($expr) > 1 && str_starts_with($expr, '(') && str_ends_with($expr, ')')) {
-            $depth = 0;
-            for ($i = 0, $n = \strlen($expr); $i < $n; ++$i) {
-                $depth += ('(' === $expr[$i] ? 1 : (')' === $expr[$i] ? -1 : 0));
-                if (0 === $depth && $i < $n - 1) {
-                    return $expr; // the opening bracket closed early — not a wrapper
-                }
-            }
-            $expr = substr($expr, 1, -1);
+        while (null !== ($pair = self::removableParens($expr))) {
+            [$open, $close] = $pair;
+            $expr = substr($expr, 0, $open).substr($expr, $open + 1, $close - $open - 1).substr($expr, $close + 1);
         }
 
         return $expr;
+    }
+
+    /**
+     * Position of the first bracket pair {@see stripRedundantParens} may remove, or null if none.
+     *
+     * @return array{int, int}|null
+     */
+    private static function removableParens(string $expr): ?array
+    {
+        /** @psalm-var list<int> $open */
+        $open = [];
+        $n = \strlen($expr);
+
+        for ($i = 0; $i < $n; ++$i) {
+            if ("'" === $expr[$i]) {
+                $i = self::endOfLiteral($expr, $i);
+                continue;
+            }
+
+            if ('(' === $expr[$i]) {
+                $open[] = $i;
+                continue;
+            }
+
+            if (')' !== $expr[$i]) {
+                continue;
+            }
+
+            $start = array_pop($open);
+            if (null === $start) {
+                return null; // unbalanced — leave the expression exactly as it is
+            }
+
+            $before = $start > 0 ? $expr[$start - 1] : '';
+            $after = $i + 1 < $n ? $expr[$i + 1] : '';
+
+            // A bracket or comma either side means there is no operator to bind across the pair,
+            // and an empty side means there is nothing there at all. A letter before it makes it a
+            // function's own bracket; anything else is an operator whose grouping it decides.
+            if (\in_array($before, ['', '(', ','], true) && \in_array($after, ['', ')', ','], true)) {
+                return [$start, $i];
+            }
+        }
+
+        return null;
+    }
+
+    /** Index of the closing quote of the literal opening at `$start`, or the last index if unterminated. */
+    private static function endOfLiteral(string $expr, int $start): int
+    {
+        $n = \strlen($expr);
+        for ($i = $start + 1; $i < $n; ++$i) {
+            if ("'" !== $expr[$i]) {
+                continue;
+            }
+            if ($i + 1 < $n && "'" === $expr[$i + 1]) {
+                ++$i; // an escaped quote, not the end
+
+                continue;
+            }
+
+            return $i;
+        }
+
+        return $n - 1;
     }
 
     /** Parse the members out of a MySQL-style `enum('a','b')` / `set('a','b')` type string. */

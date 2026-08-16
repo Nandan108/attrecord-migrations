@@ -136,9 +136,32 @@ final class ColumnNormalizerTest extends TestCase
         $live = self::tuple($n, self::live('tinyint(1)', null, true, generated: 'closed_at is null'));
         self::assertSame($declared->generated, $live->generated);
 
-        // Brackets that are load-bearing survive: they open and close before the end, so the
-        // expression is not merely wrapped.
+        // Brackets that are load-bearing survive: an operator binds across them, so removing them
+        // would change what the expression means.
         $paired = self::tuple($n, self::live('int(11)', null, true, generated: '(a)-(b)'));
         self::assertSame('(a)-(b)', $paired->generated);
+        $grouped = self::tuple($n, self::live('int(11)', null, true, generated: '(a+b)*c'));
+        self::assertSame('(a+b)*c', $grouped->generated);
+    }
+
+    public function testGenerationExpressionAbsorbsBracketedFunctionArguments(): void
+    {
+        // MySQL brackets a compound function argument where MariaDB does not, so the *same*
+        // declaration reads back differently on the two engines. A bracket pair whose neighbours
+        // are a bracket or a comma has no operator binding across it and cannot be changing
+        // anything, so both spellings canonicalize to one.
+        $n = new MysqlColumnNormalizer();
+        $mariadb = self::tuple($n, self::live('int(11)', null, false, generated: 'greatest(0,cast(a as signed) - cast(b as signed))'));
+        $mysql = self::tuple($n, self::live('int(11)', null, false, generated: 'greatest(0,(cast(a as signed) - cast(b as signed)))'));
+        self::assertSame($mariadb->generated, $mysql->generated);
+        self::assertSame('greatest(0,cast(aassigned)-cast(bassigned))', $mysql->generated);
+
+        // Nested wrappers come off one at a time; a function's own bracket never does.
+        $nested = self::tuple($n, self::live('int(11)', null, false, generated: 'f(((a-b)),c)'));
+        self::assertSame('f(a-b,c)', $nested->generated);
+
+        // Brackets inside a literal are text. Unbalanced there, they must not be read as structure.
+        $literal = self::tuple($n, self::live('varchar(8)', null, true, generated: "concat('(',a)"));
+        self::assertSame("concat('(',a)", $literal->generated);
     }
 }
