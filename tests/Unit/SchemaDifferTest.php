@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Tests\Unit;
 
+use Nandan108\Attrecord\Attribute\Check;
 use Nandan108\Attrecord\Attribute\Column;
 use Nandan108\Attrecord\Attribute\ForeignKey;
 use Nandan108\Attrecord\Attribute\Index;
@@ -113,6 +114,19 @@ final class DiffRenameRecord extends Record
  * Differ + classifier unit cases against hand-built LiveTables (no database): change kinds,
  * classifications, fail-safe Manual routing, and the dialect-specific SQL shapes.
  */
+
+/** A table carrying one table-level CHECK, for the constraint-diff cases. */
+#[Table(name: 'diff_t')]
+#[Check('qty_non_negative', 'qty >= 0')]
+final class DiffCheckedRecord extends Record
+{
+    #[Column(ColumnType::BigIntUnsigned, autoIncrement: true)]
+    public ?int $id = null;
+
+    #[Column(ColumnType::SmallIntUnsigned, default: 0)]
+    public int $qty = 0;
+}
+
 final class SchemaDifferTest extends TestCase
 {
     protected function setUp(): void
@@ -657,5 +671,129 @@ final class SchemaDifferTest extends TestCase
         );
 
         self::assertSame('qty', self::only($changes, 'add_column')->subject);
+    }
+
+    // --- CHECK constraints -------------------------------------------------
+
+    /**
+     * A LiveTable matching DiffCheckedRecord's columns, with whatever CHECK constraints are given.
+     *
+     * @param array<array-key, string> $checks
+     */
+    private static function liveChecked(array $checks): LiveTable
+    {
+        return new LiveTable(
+            'diff_t',
+            [
+                'id'  => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
+                'qty' => new LiveColumn('qty', 'smallint(5) unsigned', false, '0', false),
+            ],
+            ['id'],
+            [],
+            [],
+            $checks,
+        );
+    }
+
+    private static function checkName(): string
+    {
+        return (string) array_key_first(TableSchema::fromClass(DiffCheckedRecord::class)->checks);
+    }
+
+    public function testADeclaredCheckMissingLiveIsAddedSafelyButFlagged(): void
+    {
+        $changes = self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffCheckedRecord::class), self::liveChecked([]));
+        $add = self::only($changes, 'add_check');
+
+        self::assertSame(ChangeClass::Safe, $add->class);
+        // ADD CONSTRAINT validates the rows already there, so it can reject them — loudly and
+        // atomically, the same shape as ADD UNIQUE on duplicate data.
+        self::assertTrue($add->mayRejectExistingRows);
+        self::assertStringContainsString('ADD CONSTRAINT', $add->statements[0]);
+        self::assertStringContainsString('qty >= 0', $add->statements[0]);
+    }
+
+    public function testAPresentCheckIsLeftAlone(): void
+    {
+        // Note the live body is the engine's re-spelling, not the declaration — matching by name is
+        // what makes that a non-event rather than permanent drift.
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffCheckedRecord::class),
+            self::liveChecked([self::checkName() => '(`qty` >= 0)']),
+        );
+
+        self::assertSame([], array_values(array_filter(
+            $changes,
+            static fn (PlannedChange $c): bool => str_contains($c->kind, 'check'),
+        )));
+    }
+
+    public function testAnUndeclaredCheckIsDroppedDestructively(): void
+    {
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffCheckedRecord::class),
+            self::liveChecked([self::checkName() => '(`qty` >= 0)', 'chk_hand_written' => '(`qty` <> 7)']),
+        );
+        $drop = self::only($changes, 'drop_check');
+
+        self::assertSame(ChangeClass::Destructive, $drop->class);
+        self::assertSame('chk_hand_written', $drop->subject);
+        self::assertStringContainsString('DROP CONSTRAINT', $drop->statements[0]);
+    }
+
+    public function testAPartiallyDeclaredTableKeepsUndeclaredChecks(): void
+    {
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffCheckedRecord::class),
+            self::liveChecked([self::checkName() => '(`qty` >= 0)', 'chk_someone_elses' => '(`qty` <> 7)']),
+            partiallyDeclared: true,
+        );
+
+        self::assertSame([], array_values(array_filter(
+            $changes,
+            static fn (PlannedChange $c): bool => 'drop_check' === $c->kind,
+        )));
+    }
+
+    public function testMariadbsJsonValidityConstraintIsNotProposedForDropping(): void
+    {
+        // MariaDB has no JSON storage type: a JSON column is LONGTEXT plus an engine-created
+        // `CHECK (json_valid(col))` named after the column. Nothing declares it, so a name-only
+        // diff would read it as undeclared and plan a drop — on any schema with a JSON column,
+        // a table that never converges.
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffCheckedRecord::class),
+            self::liveChecked([self::checkName() => '(`qty` >= 0)', 'qty' => 'json_valid(`qty`)']),
+        );
+
+        self::assertSame([], array_values(array_filter(
+            $changes,
+            static fn (PlannedChange $c): bool => 'drop_check' === $c->kind,
+        )));
+    }
+
+    public function testAConstraintNamedAfterAColumnIsStillDroppedWhenItIsNotAJsonGuard(): void
+    {
+        // The json_valid exemption is matched on the body too, so an author's own constraint that
+        // happens to carry a column's name stays theirs to converge.
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffCheckedRecord::class),
+            self::liveChecked([self::checkName() => '(`qty` >= 0)', 'qty' => '(`qty` <> 13)']),
+        );
+
+        self::assertSame('qty', self::only($changes, 'drop_check')->subject);
+    }
+
+    public function testSqliteCannotAlterConstraintsSoAMissingCheckIsManual(): void
+    {
+        $dialect = new SqliteDialect();
+        $differ = new SchemaDiffer(new SqliteColumnNormalizer(), new SqliteAlterEmitter($dialect), $dialect);
+
+        $changes = $differ->diffTable(TableSchema::fromClass(DiffCheckedRecord::class), self::liveChecked([]));
+        $manual = self::only($changes, 'manual');
+
+        self::assertSame(ChangeClass::Manual, $manual->class);
+        self::assertStringContainsString('table rebuild', $manual->reason);
+        self::assertSame([], $manual->statements);
     }
 }

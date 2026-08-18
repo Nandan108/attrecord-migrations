@@ -7,6 +7,7 @@ namespace Nandan108\AttrecordMigrations\Tests\Integration;
 use Nandan108\AttrecordMigrations\Introspect\MysqlIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CheckConstraintCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CompositePkCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
@@ -17,6 +18,7 @@ use Nandan108\AttrecordMigrations\Tests\Support\MysqlIntegrationTestCase;
 final class EvolutionMysqlTest extends MysqlIntegrationTestCase
 {
     use CyclicSchemaCases;
+    use CheckConstraintCases;
     use CompositePkCases;
     use DriftMatrixCases;
     use EvolutionCases;

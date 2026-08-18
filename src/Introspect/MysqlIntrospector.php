@@ -128,6 +128,71 @@ final class MysqlIntrospector implements SchemaIntrospector
             );
         }
 
-        return new LiveTable($tableName, $columns, $primaryKey, $indexes, $foreignKeys);
+        return new LiveTable($tableName, $columns, $primaryKey, $indexes, $foreignKeys, $this->checks($session, $tableName));
+    }
+
+    /**
+     * CHECK constraints on this table, name → body.
+     *
+     * Two shapes, because the two engines expose the same view differently. **MariaDB** scopes
+     * CHECK names per table and its `CHECK_CONSTRAINTS` carries `TABLE_NAME`, so one filtered read
+     * is exact. **MySQL** scopes them per *schema* and its `CHECK_CONSTRAINTS` therefore has no
+     * table column at all — the table has to come from `TABLE_CONSTRAINTS`, joined on schema plus
+     * name, which is unambiguous there for that same reason.
+     *
+     * Trying MariaDB's shape first and falling back is deliberate: the fallback query is valid on
+     * *both* engines, so probing the other way round would silently take the join path on MariaDB
+     * and cross-join two same-named constraints from different tables.
+     *
+     * Both views are absent on engines predating CHECK support (MySQL below 8.0.16, MariaDB below
+     * 10.2.22), where the second query fails too and the answer is "no CHECK constraints" — honest,
+     * and it keeps the differ from proposing constraints such an engine would ignore anyway.
+     *
+     * @return array<array-key, string>
+     */
+    private function checks(DbSession $session, string $tableName): array
+    {
+        $rows = $this->tryFetch(
+            $session,
+            'SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+               FROM information_schema.CHECK_CONSTRAINTS
+              WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$tableName],
+        ) ?? $this->tryFetch(
+            $session,
+            "SELECT tc.CONSTRAINT_NAME, cc.CHECK_CLAUSE
+               FROM information_schema.TABLE_CONSTRAINTS tc
+               JOIN information_schema.CHECK_CONSTRAINTS cc
+                 ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+                AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+              WHERE tc.TABLE_SCHEMA = DATABASE()
+                AND tc.TABLE_NAME = ?
+                AND tc.CONSTRAINT_TYPE = 'CHECK'",
+            [$tableName],
+        ) ?? [];
+
+        $checks = [];
+        foreach ($rows as $row) {
+            $checks[(string) $row['CONSTRAINT_NAME']] = (string) ($row['CHECK_CLAUSE'] ?? '');
+        }
+
+        return $checks;
+    }
+
+    /**
+     * Run a catalogue query, or null when this engine does not have that view/column. Catalogue
+     * probing is the one place where an error is an *answer* rather than a failure.
+     *
+     * @param list<scalar> $params
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    private function tryFetch(DbSession $session, string $sql, array $params): ?array
+    {
+        try {
+            return $session->fetchAll($sql, $params);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Emit;
 
+use Nandan108\Attrecord\Schema\CheckDefinition;
 use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
 use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
@@ -50,6 +51,19 @@ interface AlterEmitter
 
     /** @return list<string>|null null when the engine cannot drop an FK in place (SQLite) */
     public function dropForeignKey(string $table, string $name): ?array;
+
+    /**
+     * Add a table-level CHECK constraint, or null when the engine cannot (SQLite — table rebuild).
+     *
+     * The constraint fragment comes from the attrecord dialect, so it renders identically here and
+     * in CREATE TABLE.
+     *
+     * @return list<string>|null
+     */
+    public function addCheck(string $table, CheckDefinition $check): ?array;
+
+    /** @return list<string>|null null when the engine cannot drop a CHECK in place (SQLite) */
+    public function dropCheck(string $table, string $name): ?array;
 
     /**
      * Rename a constraint in place, or null when the engine has no such operation.

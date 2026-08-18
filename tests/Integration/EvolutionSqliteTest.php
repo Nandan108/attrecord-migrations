@@ -10,6 +10,7 @@ use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SqliteIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\KitchenSinkRecord;
+use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CheckConstraintCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CompositePkCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\DriftMatrixCases;
@@ -20,9 +21,39 @@ use Nandan108\AttrecordMigrations\Tests\Support\SqliteIntegrationTestCase;
 final class EvolutionSqliteTest extends SqliteIntegrationTestCase
 {
     use CyclicSchemaCases;
+    use CheckConstraintCases;
     use CompositePkCases;
+
     use DriftMatrixCases;
     use EvolutionCases;
+
+    /**
+     * SQLite has no ALTER TABLE ADD/DROP CONSTRAINT — the table must be rebuilt — so constraint
+     * convergence is pinned Manual here rather than skipped. Emission and *enforcement* still work
+     * on a fresh CREATE; it is only evolution that stops.
+     */
+    protected function altersConstraintsInPlace(): bool
+    {
+        return false;
+    }
+
+    /**
+     * No DROP CONSTRAINT here either, so the "install predating the rule" is staged by rebuilding
+     * the table without it — which is, not coincidentally, the same manoeuvre a real SQLite
+     * migration would have to perform, and the reason constraint evolution is Manual on this
+     * backend rather than automatic.
+     */
+    protected function removeCheckFromLiveTable(): void
+    {
+        static::$session->exec('DROP TABLE "mig_checked"');
+        static::$session->exec(
+            'CREATE TABLE "mig_checked" ('
+            .'"id" INTEGER PRIMARY KEY AUTOINCREMENT, '
+            .'"archived" INTEGER NOT NULL DEFAULT 0, '
+            .'"reason" TEXT NULL'
+            .')',
+        );
+    }
 
     protected function introspector(): SchemaIntrospector
     {

@@ -6,6 +6,70 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-18
+
+**CHECK constraints converge.** attrecord 0.17 lets a Record declare one with `#[Check]`; this
+release detects a missing or undeclared one on a live table and emits the `ALTER` for it.
+
+**Requires attrecord `^0.17.1`** (the `#[Check]` attribute, `TableSchema::$checks`, and
+`SqlDialect::buildCheckLine()`). The previous range is disjoint under Composer's caret, so bump both
+in one pass.
+
+### Added
+
+- **`add_check` / `drop_check`.** A declared constraint missing live is added; a live one nobody
+  declares is dropped. `AlterEmitter` grows `addCheck()` / `dropCheck()`, both returning null on
+  SQLite, where there is no `ADD`/`DROP CONSTRAINT` and the whole table must be rebuilt — Manual,
+  pinned as an expectation rather than skipped.
+
+  `DROP CONSTRAINT` rather than MySQL's `DROP CHECK`, verified accepted by MySQL 8.0 and MariaDB 11.8
+  alike; `DROP CHECK` is MySQL-only.
+
+- **`LiveTable::$checks`** — name → body, a faithful mirror including the constraints the *engine*
+  owns. Read from `information_schema` on MySQL/MariaDB, `pg_constraint` on PostgreSQL, and the
+  stored `CREATE` text on SQLite (which has no constraint catalogue; the same scan already serving
+  enum members now returns every named CHECK).
+
+  MySQL and MariaDB need different queries for the same information, and the difference is a
+  consequence of the scoping: MariaDB's `CHECK_CONSTRAINTS` carries `TABLE_NAME`, MySQL's does not —
+  its names being unique per schema, it considers the table redundant — so MySQL joins through
+  `TABLE_CONSTRAINTS`. MariaDB's shape is tried first, because the fallback query is valid on both
+  and probing the other way round would cross-join two same-named constraints on MariaDB.
+
+### Adding a constraint is Safe, and flagged
+
+`add_check` is `ChangeClass::Safe` with `mayRejectExistingRows`, the same treatment as `ADD UNIQUE`
+on possibly-duplicate data and `ADD FOREIGN KEY` on possible orphans: the statement validates every
+row already in the table and either succeeds or fails whole. It never half-applies and never
+silently discards the rows that break the rule — which is exactly why it can be offered as Safe
+rather than held back. Dropping an undeclared constraint is `Destructive`, like any other drop.
+
+### Converged by name, deliberately never by expression
+
+No engine stores the expression as written. MySQL re-prints it with charset introducers and its own
+brackets, PostgreSQL adds `::text` casts. A body comparison therefore cannot distinguish *the author
+changed the rule* from *the engine spells it differently*, and both answers to that ambiguity are
+wrong in a different direction: compare, and a correct database reports drift forever; skip, and a
+corrected rule never reaches a database that has the old one. Generated-column expressions
+demonstrated both failure modes, in that order, and 0.5.2 was the second one.
+
+The producer removes the dilemma instead of resolving it: an attrecord CHECK name carries a digest of
+its expression, so an edited rule *is* a differently-named constraint and appears here as one add and
+one drop. Name-only diffing is therefore complete for constraints attrecord emitted. The honest
+limit, documented as one: a **hand-written** constraint whose body is edited in place, name
+unchanged, is invisible.
+
+### Two constraints that belong to a column, and are never dropped
+
+- The `chk_<column>_enum` member list the producer writes on PostgreSQL and SQLite. The column diff
+  converges those; dropping one here would take the enum's enforcement with it.
+- **MariaDB's `CHECK (json_valid(col))`.** MariaDB has no JSON storage type — a `JSON` column is
+  LONGTEXT plus that constraint, created by the engine, named after the column, declared by nobody.
+  A name-only diff reads it as undeclared, so without this every table with a JSON column would plan
+  a drop and never converge. Found by the existing suite the moment checks were introspected at all.
+  Matched on the body as well as the name, so an author's own constraint that happens to carry a
+  column's name stays theirs.
+
 ## [0.5.2] - 2026-08-16
 
 A changed generation expression was invisible, and the one class that could have reported it could
@@ -357,7 +421,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.4.1...v0.5.0

@@ -18,7 +18,7 @@ final class PlannedChange
     /** @param list<string> $statements executable SQL, in order; [] for Manual changes */
     public function __construct(
         public readonly string $table,
-        /** Machine-readable kind: create_table, add_column, modify_column, rename_column, drop_column, create_index, drop_index, add_foreign_key, drop_foreign_key, manual. */
+        /** Machine-readable kind: create_table, add_column, modify_column, rename_column, drop_column, create_index, drop_index, add_foreign_key, drop_foreign_key, add_check, drop_check, manual. */
         public readonly string $kind,
         /** The column/index/constraint the change targets ('' for whole-table changes). */
         public readonly string $subject,

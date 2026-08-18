@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nandan108\AttrecordMigrations\Emit;
 
 use Nandan108\Attrecord\Dialect\PgsqlDialect;
+use Nandan108\Attrecord\Schema\CheckDefinition;
 use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
 use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
@@ -115,6 +116,20 @@ final class PgsqlAlterEmitter implements AlterEmitter
     #[\Override]
     public function dropForeignKey(string $table, string $name): ?array
     {
+        return ['ALTER TABLE '.$this->q($table).' DROP CONSTRAINT '.$this->q($name)];
+    }
+
+    #[\Override]
+    public function addCheck(string $table, CheckDefinition $check): ?array
+    {
+        return ['ALTER TABLE '.$this->q($table).' ADD '.$this->dialect->buildCheckLine($check)];
+    }
+
+    #[\Override]
+    public function dropCheck(string $table, string $name): ?array
+    {
+        // DROP CONSTRAINT rather than MySQL's DROP CHECK: both engines accept it (verified on
+        // MySQL 8.0 and MariaDB 11.8), where DROP CHECK is MySQL-only.
         return ['ALTER TABLE '.$this->q($table).' DROP CONSTRAINT '.$this->q($name)];
     }
 

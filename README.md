@@ -25,7 +25,7 @@ Backends: **MySQL/MariaDB, PostgreSQL, SQLite** — same tri-dialect matrix as a
 composer require nandan108/attrecord-migrations
 ```
 
-Requires PHP 8.1+ and `nandan108/attrecord` `^0.15 || ^0.16`. No other runtime dependencies.
+Requires PHP 8.1+ and `nandan108/attrecord` `^0.17.1`. No other runtime dependencies.
 
 Footprint: `src/` is ~143 KB across 33 files (~89 KB of that is code — the other 38% is
 docblocks), so the published package is **~64 KB zipped**. That is on top of attrecord itself, and
@@ -70,8 +70,8 @@ Every planned change carries a class; `apply(allow:)` is a **ceiling** over the 
 
 | Class | Applied | Examples |
 | --- | --- | --- |
-| `Safe` (default) | yes | `ADD COLUMN` (nullable/defaulted), `ADD INDEX`, widenings (`VARCHAR(64)→(191)`, `SMALLINT→INT`), default changes, declared renames. `ADD UNIQUE`/`ADD FK` are Safe but flagged `mayRejectExistingRows` — they can *loudly* reject (atomic failure, never silent loss). |
-| `Destructive` | opt-in only | `DROP COLUMN`, narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index drops. |
+| `Safe` (default) | yes | `ADD COLUMN` (nullable/defaulted), `ADD INDEX`, widenings (`VARCHAR(64)→(191)`, `SMALLINT→INT`), default changes, declared renames. `ADD UNIQUE`/`ADD FK`/`ADD CHECK` are Safe but flagged `mayRejectExistingRows` — they can *loudly* reject (atomic failure, never silent loss). |
+| `Destructive` | opt-in only | `DROP COLUMN`, narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index and undeclared-CHECK drops. |
 | `Assisted` | opt-in, its own ceiling | A changed generation expression. The statement is known and carried; what it needs is a person who read it and said yes. **Not** reached by opting into `Destructive` — a widened destructive policy must not sweep in changes chosen deliberately. |
 | `Manual` | **never** | PK changes, auto-increment drift, anything the pipeline is *unsure* about, SQLite rebuild-only changes. No SQL — a reason to read, not a statement to run, which is why no ceiling admits it. |
 
@@ -219,6 +219,20 @@ $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
   A difference the canon cannot absorb is reported `Assisted` with *both* spellings quoted, so a
   normalization gap looks like one at a glance instead of like a schema change; adopting it is
   harmless either way. A column gaining or losing generation entirely is a plain modification.
+- **CHECK constraints are converged by name, never by expression.** No engine stores the expression
+  you wrote (MySQL re-prints it with charset introducers, PostgreSQL adds casts), so a body
+  comparison would report drift on a correct database forever. attrecord's own `#[Check]` names
+  carry a digest *of* the expression, so an edited rule arrives here as a differently-named
+  constraint — one add, one drop — which makes name-only diffing complete for constraints this
+  producer emitted. A **hand-written** constraint whose body someone edits in place, keeping the
+  name, is genuinely invisible. Adding one is `Safe` but flagged `mayRejectExistingRows`: the
+  statement validates every existing row and fails atomically if any breaks the rule. SQLite has
+  neither `ADD` nor `DROP CONSTRAINT`, so both classify Manual there.
+
+  Two kinds of CHECK are recognised as **column-owned** and never proposed for dropping: the
+  `chk_<column>_enum` member list on PostgreSQL/SQLite, and MariaDB's automatic
+  `CHECK (json_valid(col))` on a JSON column (MariaDB has no JSON type — it is LONGTEXT plus that
+  constraint, engine-created, declared by nobody).
 - `ON UPDATE CURRENT_TIMESTAMP` drift and PostgreSQL `BIT` round-trips are not compared.
 - Tables the Records don't declare are **invisible** — never dropped, never touched.
 - An index whose leading columns are a foreign key's columns is treated as that FK's supporting

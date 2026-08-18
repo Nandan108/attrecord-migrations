@@ -43,14 +43,17 @@ final class PgsqlIntrospector implements SchemaIntrospector
         // Enum members live in a CHECK constraint on PG (no native ENUM type), keyed by the
         // producer's deterministic constraint name. Fetched per table in one query rather than
         // per column: a table with many enums would otherwise be N round-trips.
-        $enumChecks = [];
+        // One read serves both purposes: the enum members below, and the table-level CHECK
+        // constraints the differ converges. They are the same catalogue rows — which of them is a
+        // column's enum list is decided by name, downstream.
+        $checks = [];
         foreach ($session->fetchAll(
             "SELECT conname, pg_get_constraintdef(oid) AS condef
              FROM pg_constraint
              WHERE conrelid = to_regclass(?) AND contype = 'c'",
             [$tableName],
         ) as $row) {
-            $enumChecks[(string) $row['conname']] = (string) $row['condef'];
+            $checks[(string) $row['conname']] = (string) $row['condef'];
         }
 
         $columns = [];
@@ -79,7 +82,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
                 rawDefault: $isSequenceDefault ? null : $rawDefault,
                 autoIncrement: $autoIncrement,
                 generationExpression: '' !== $generation ? $generation : null,
-                rawEnumCheck: $enumChecks[ColumnDefinition::enumCheckConstraintName($name)] ?? null,
+                rawEnumCheck: $checks[ColumnDefinition::enumCheckConstraintName($name)] ?? null,
             );
         }
 
@@ -184,7 +187,7 @@ final class PgsqlIntrospector implements SchemaIntrospector
             );
         }
 
-        return new LiveTable($tableName, $columns, $primaryKey, $indexes, $foreignKeys);
+        return new LiveTable($tableName, $columns, $primaryKey, $indexes, $foreignKeys, $checks);
     }
 
     /** Rebuild a display type from udt + dimensions: `varchar(64)`, `numeric(10,2)`, `timestamp(6)`, `int8`. */

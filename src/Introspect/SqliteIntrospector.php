@@ -43,6 +43,10 @@ final class SqliteIntrospector implements SchemaIntrospector
             ['table', $tableName],
         )['sql'] ?? '');
 
+        // Scanned once, read twice: an enum column's member list and the table's own CHECK
+        // constraints are the same clauses, told apart by name.
+        $checks = self::extractChecks($createSql);
+
         $primaryKey = [];
         $columns = [];
         /** @var array<int, array{name: string, type: string, notnull: bool, dflt: ?string, hidden: int}> $byPkOrder */
@@ -72,7 +76,7 @@ final class SqliteIntrospector implements SchemaIntrospector
                 rawDefault: isset($row['dflt_value']) ? (string) $row['dflt_value'] : null,
                 autoIncrement: $isAiPk,
                 generationExpression: $isGenerated ? self::extractGenerationExpr($createSql, $name) : null,
-                rawEnumCheck: self::extractEnumCheck($createSql, $name),
+                rawEnumCheck: $checks[ColumnDefinition::enumCheckConstraintName($name)] ?? null,
             );
         }
 
@@ -136,7 +140,7 @@ final class SqliteIntrospector implements SchemaIntrospector
             );
         }
 
-        return new LiveTable($tableName, $columns, $primaryKey, $indexes, $foreignKeys);
+        return new LiveTable($tableName, $columns, $primaryKey, $indexes, $foreignKeys, $checks);
     }
 
     private static function quote(string $identifier): string
@@ -146,35 +150,55 @@ final class SqliteIntrospector implements SchemaIntrospector
 
     /** Best-effort: pull `GENERATED ALWAYS AS (expr)` for a column out of the stored CREATE sql. */
     /**
-     * Recover the body of the producer's `chk_<column>_enum` CHECK constraint from the stored
-     * CREATE sql — how enum members stay visible on SQLite, which has no native ENUM type.
+     * Every named CHECK constraint in the stored CREATE sql, name → body.
      *
-     * SQLite stores the DDL text verbatim, so unlike PostgreSQL this is the producer's own
-     * expression, unrewritten. It still cannot be a plain regex: a member may contain a
-     * parenthesis (`'a)b'`), so the closing paren is found by balancing while skipping over
-     * single-quoted literals rather than by matching the first `)`.
+     * SQLite has no catalogue of constraints — the DDL text *is* the catalogue — so they are read
+     * back out of it. Which is a gift as well as a chore: unlike PostgreSQL and MySQL, SQLite
+     * stores the producer's own expression unrewritten, so what comes back is what was written.
+     *
+     * It still cannot be a plain regex. A member or literal may contain a parenthesis (`'a)b'`),
+     * so each body ends where its brackets balance, counted while skipping over single-quoted
+     * literals rather than by matching the first `)`. An unbalanced body is left out entirely —
+     * unreadable beats guessed.
+     *
+     * @return array<string, string>
      */
-    private static function extractEnumCheck(string $createSql, string $column): ?string
+    private static function extractChecks(string $createSql): array
     {
-        $marker = 'CONSTRAINT "'.ColumnDefinition::enumCheckConstraintName($column).'" CHECK (';
-        $at = stripos($createSql, $marker);
-        if (false === $at) {
-            return null;
+        if (0 === preg_match_all('/CONSTRAINT\s+"?([^"\s]+)"?\s+CHECK\s*\(/i', $createSql, $matches, \PREG_SET_ORDER | \PREG_OFFSET_CAPTURE)) {
+            return [];
         }
 
-        $i = $at + \strlen($marker);
+        $checks = [];
+        foreach ($matches as $match) {
+            /** @psalm-var array{0: array{0: string, 1: int}, 1: array{0: string, 1: int}} $match */
+            $body = self::balancedBody($createSql, $match[0][1] + \strlen($match[0][0]));
+            if (null !== $body) {
+                $checks[$match[1][0]] = $body;
+            }
+        }
+
+        return $checks;
+    }
+
+    /**
+     * The text from `$start` up to the bracket that closes the one already open, or null when the
+     * brackets never balance. Single-quoted literals are skipped wholesale, `''` inside one being
+     * an escaped quote rather than its end.
+     */
+    private static function balancedBody(string $sql, int $start): ?string
+    {
+        $i = $start;
         $depth = 1;
-        $length = \strlen($createSql);
-        $start = $i;
+        $length = \strlen($sql);
 
         while ($i < $length) {
-            $char = $createSql[$i];
+            $char = $sql[$i];
             if ("'" === $char) {
-                // Skip the literal wholesale; `''` inside it is an escaped quote, not a close.
                 ++$i;
                 while ($i < $length) {
-                    if ("'" === $createSql[$i]) {
-                        if ($i + 1 < $length && "'" === $createSql[$i + 1]) {
+                    if ("'" === $sql[$i]) {
+                        if ($i + 1 < $length && "'" === $sql[$i + 1]) {
                             $i += 2;
                             continue;
                         }
@@ -186,13 +210,13 @@ final class SqliteIntrospector implements SchemaIntrospector
                 ++$depth;
             } elseif (')' === $char) {
                 if (0 === --$depth) {
-                    return substr($createSql, $start, $i - $start);
+                    return substr($sql, $start, $i - $start);
                 }
             }
             ++$i;
         }
 
-        return null; // unbalanced — treat as unreadable rather than guess
+        return null;
     }
 
     private static function extractGenerationExpr(string $createSql, string $column): ?string

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Nandan108\AttrecordMigrations\Emit;
 
 use Nandan108\Attrecord\Dialect\SqliteDialect;
+use Nandan108\Attrecord\Schema\CheckDefinition;
 use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
 use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
@@ -77,6 +78,18 @@ final class SqliteAlterEmitter implements AlterEmitter
     public function dropForeignKey(string $table, string $name): ?array
     {
         return null; // no in-place FK drop — table rebuild, Manual in v0.1
+    }
+
+    #[\Override]
+    public function addCheck(string $table, CheckDefinition $check): ?array
+    {
+        return null; // SQLite has no ADD CONSTRAINT — table rebuild, Manual
+    }
+
+    #[\Override]
+    public function dropCheck(string $table, string $name): ?array
+    {
+        return null; // nor DROP CONSTRAINT — same rebuild boundary
     }
 
     #[\Override]

@@ -297,7 +297,118 @@ final class SchemaDiffer
             $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Destructive, $drop, 'foreign key exists live but is not declared');
         }
 
+        return [...$changes, ...$this->diffChecks($table, $desired, $live, $partiallyDeclared)];
+    }
+
+    /**
+     * CHECK constraints, **by name only**.
+     *
+     * Deliberately no expression comparison anywhere, because no engine gives the expression back
+     * the way it was written — MySQL re-prints it with charset introducers and its own brackets,
+     * PostgreSQL adds casts — so a textual comparison cannot separate "the author changed the rule"
+     * from "the engine spells it differently". Every available answer to that ambiguity is wrong in
+     * one direction or the other: compare, and a correct database reports drift forever; skip, and a
+     * corrected rule never reaches a database that already has the old one. (Generated-column
+     * expressions demonstrated both, in that order.)
+     *
+     * The producer sidesteps it instead: an attrecord CHECK name carries a digest of its expression,
+     * so an edited expression *is* a differently-named constraint and shows up here as one add and
+     * one drop. That makes name-only diffing complete rather than partial — for constraints this
+     * package's producer emitted. A hand-written constraint whose body someone edits in place is
+     * genuinely invisible, which is the honest limit and is documented as one.
+     *
+     * @return list<PlannedChange>
+     */
+    private function diffChecks(string $table, TableSchema $desired, LiveTable $live, bool $partiallyDeclared): array
+    {
+        $changes = [];
+
+        foreach ($desired->checks as $check) {
+            // The definition's own name rather than the map key: a numerically-named constraint
+            // would arrive here as an int key, and this one is a string by construction.
+            $name = $check->constraintName;
+            if (isset($live->checks[$name])) {
+                continue;
+            }
+
+            $add = $this->emitter->addCheck($table, $check);
+            if (null === $add) {
+                $changes[] = $this->manual($table, $name, 'CHECK constraint is declared but missing; this engine cannot add one in place (table rebuild)');
+                continue;
+            }
+
+            // Safe, but flagged: ADD CONSTRAINT validates every existing row, so it can reject the
+            // table's current contents. Loudly and atomically — the same shape as ADD UNIQUE on
+            // duplicate data or ADD FK on orphans, never a partial application or silent loss.
+            $changes[] = new PlannedChange(
+                $table,
+                'add_check',
+                $name,
+                ChangeClass::Safe,
+                $add,
+                'CHECK constraint declared but not present live: '.$check->expression,
+                mayRejectExistingRows: true,
+            );
+        }
+
+        if ($partiallyDeclared) {
+            return $changes;
+        }
+
+        foreach (array_keys($live->checks) as $name) {
+            $name = (string) $name; // numeric-string array key -> int; see above
+            if (isset($desired->checks[$name]) || $this->isEngineOwnedCheck($name, $live->checks[$name], $desired, $live)) {
+                continue;
+            }
+
+            $drop = $this->emitter->dropCheck($table, $name);
+            if (null === $drop) {
+                $changes[] = $this->manual($table, $name, 'undeclared live CHECK constraint; this engine cannot drop one in place');
+                continue;
+            }
+
+            $changes[] = new PlannedChange($table, 'drop_check', $name, ChangeClass::Destructive, $drop, 'CHECK constraint exists live but is not declared');
+        }
+
         return $changes;
+    }
+
+    /**
+     * Whether this CHECK constraint belongs to a *column* rather than to the table — in which case
+     * it is not this diff's to converge, and proposing to drop it would remove something nobody
+     * asked for.
+     *
+     * Two kinds, both invisible in the Record because both are consequences of a column type:
+     *
+     * - **Enum members.** On PostgreSQL and SQLite an `#[Column(ColumnType::Enum)]` has nowhere
+     *   native to keep its member list, so the producer writes it into a `chk_<column>_enum` CHECK.
+     *   The column diff converges those; dropping one here would take the enum's enforcement with
+     *   it.
+     * - **MariaDB's JSON validity constraint.** MariaDB has no JSON storage type — a `JSON` column
+     *   is LONGTEXT plus an automatic `CHECK (json_valid(col))` named after the column, created by
+     *   the engine and reported like any other constraint. Nothing declares it, so a name-only diff
+     *   reads it as undeclared and plans a drop; on a schema with any JSON column that is a table
+     *   that never converges. Matched on the body as well as the name, so an author's own
+     *   constraint that happens to be named after a column is still theirs.
+     *
+     * Both are matched against the live *and* declared column sets, so a constraint left behind by
+     * a column that has since been dropped is recognised too.
+     */
+    private function isEngineOwnedCheck(string $name, string $body, TableSchema $desired, LiveTable $live): bool
+    {
+        foreach ([array_keys($desired->columns), array_keys($live->columns)] as $columnNames) {
+            foreach ($columnNames as $column) {
+                $column = (string) $column;
+                if (ColumnDefinition::enumCheckConstraintName($column) === $name) {
+                    return true;
+                }
+                if ($column === $name && 1 === preg_match('/^\s*json_valid\s*\(/i', $body)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /** @return list<PlannedChange> */
