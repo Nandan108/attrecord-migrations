@@ -45,12 +45,27 @@ final class EvolutionSqliteTest extends SqliteIntegrationTestCase
      */
     protected function removeCheckFromLiveTable(): void
     {
+        $this->rebuildCheckedTable('');
+    }
+
+    /** Same rebuild, keeping the declared constraint and adding one nobody declared. */
+    protected function addUndeclaredCheckToLiveTable(): void
+    {
+        $this->rebuildCheckedTable(
+            ', CONSTRAINT "'.self::checkName().'" CHECK (archived = 0 OR reason IS NOT NULL)'
+            .', CONSTRAINT "chk_hand_written" CHECK (archived <> 9)',
+        );
+    }
+
+    private function rebuildCheckedTable(string $constraints): void
+    {
         static::$session->exec('DROP TABLE "mig_checked"');
         static::$session->exec(
             'CREATE TABLE "mig_checked" ('
             .'"id" INTEGER PRIMARY KEY AUTOINCREMENT, '
             .'"archived" INTEGER NOT NULL DEFAULT 0, '
             .'"reason" TEXT NULL'
+            .$constraints
             .')',
         );
     }

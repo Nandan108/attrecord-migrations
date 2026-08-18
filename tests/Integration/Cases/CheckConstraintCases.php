@@ -17,9 +17,9 @@ use Nandan108\AttrecordMigrations\Tests\Fixtures\CheckedRecord;
  * created from its Record must re-plan empty, and an engine that re-spells the expression is what
  * makes that non-trivial), and whether `ADD CONSTRAINT` really validates the rows already there.
  *
- * SQLite can do neither ADD nor DROP CONSTRAINT, so its runner overrides the two convergence
- * expectations to Manual — pinned rather than skipped, the way the drift matrix pins per-backend
- * blind spots.
+ * SQLite can do neither ADD nor DROP CONSTRAINT, so every convergence case there asserts Manual
+ * instead — pinned rather than skipped, the way the drift matrix pins per-backend blind spots, and
+ * because CI runs `--fail-on-skipped` on the principle that a skipped backend is not a passing one.
  */
 trait CheckConstraintCases
 {
@@ -103,10 +103,6 @@ trait CheckConstraintCases
         // The reason `add_check` is flagged `mayRejectExistingRows`: the statement validates every
         // existing row. It must fail atomically — the constraint absent afterwards, the rows
         // untouched — never half-applied, and never silently dropping the offending rows.
-        if (!$this->altersConstraintsInPlace()) {
-            self::markTestSkipped('engine cannot add a constraint in place');
-        }
-
         $migrator = $this->checkMigrator();
         $migrator->apply($migrator->plan([CheckedRecord::class]));
         $this->removeCheckFromLiveTable();
@@ -117,6 +113,15 @@ trait CheckConstraintCases
         $violating->save();
 
         $plan = $migrator->plan([CheckedRecord::class]);
+
+        if (!$this->altersConstraintsInPlace()) {
+            // Nothing to attempt: the change is Manual and carries no statement, so applying the
+            // plan is a no-op and the rows are safe by a different route — inability, not restraint.
+            $migrator->apply($plan, ChangeClass::Destructive);
+            self::assertSame(1, CheckedRecord::countWhere('archived = ?', [1]));
+
+            return;
+        }
 
         try {
             $migrator->apply($plan);
@@ -131,19 +136,26 @@ trait CheckConstraintCases
 
     public function testAnUndeclaredCheckIsProposedForDroppingOnlyBeyondSafe(): void
     {
-        if (!$this->altersConstraintsInPlace()) {
-            self::markTestSkipped('engine cannot drop a constraint in place');
-        }
-
         $migrator = $this->checkMigrator();
         $migrator->apply($migrator->plan([CheckedRecord::class]));
-        static::$session->exec($this->addCheckSql('chk_hand_written', 'archived <> 9'));
+        $this->addUndeclaredCheckToLiveTable();
 
         $plan = $migrator->plan([CheckedRecord::class]);
-        $drop = $plan->changes[0];
+        $change = $plan->changes[0];
 
-        self::assertSame('drop_check', $drop->kind);
-        self::assertSame(ChangeClass::Destructive, $drop->class);
+        if (!$this->altersConstraintsInPlace()) {
+            self::assertSame(ChangeClass::Manual, $change->class);
+            self::assertSame([], $change->statements, 'Manual carries no SQL to run');
+
+            return;
+        }
+
+        self::assertSame('drop_check', $change->kind);
+        self::assertSame(ChangeClass::Destructive, $change->class);
+
+        // Safe alone leaves it: dropping something the database already enforces is a decision.
+        $migrator->apply($plan);
+        self::assertFalse($migrator->plan([CheckedRecord::class])->isEmpty());
 
         $migrator->apply($plan, ChangeClass::Destructive);
         self::assertTrue($migrator->plan([CheckedRecord::class])->isEmpty());
@@ -158,9 +170,9 @@ trait CheckConstraintCases
         static::$session->exec('ALTER TABLE mig_checked DROP CONSTRAINT '.self::checkName());
     }
 
-    /** Raw DDL to add a constraint nobody declared. */
-    protected function addCheckSql(string $name, string $expression): string
+    /** Put a constraint nobody declared on the live table. Overridden where there is no ADD. */
+    protected function addUndeclaredCheckToLiveTable(): void
     {
-        return "ALTER TABLE mig_checked ADD CONSTRAINT {$name} CHECK ({$expression})";
+        static::$session->exec('ALTER TABLE mig_checked ADD CONSTRAINT chk_hand_written CHECK (archived <> 9)');
     }
 }
