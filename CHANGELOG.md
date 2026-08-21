@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-21
+
+### Changed
+
+- **Admit attrecord `^0.18`** alongside `^0.17.1`. 0.18.0 adds `ReferenceReader` — reading which
+  foreign keys point *at* a table — and changes nothing this package uses; the suite is green on it
+  across all three backends, which is what makes this a floor widening rather than a version bump.
+
+  Stated as a union rather than a move, so a consumer still on 0.17 is not forced across by
+  installing this.
+
 ## [0.6.0] - 2026-08-18
 
 **CHECK constraints converge.** attrecord 0.17 lets a Record declare one with `#[Check]`; this
@@ -421,7 +432,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.0...v0.5.1

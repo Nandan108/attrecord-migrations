@@ -25,7 +25,7 @@ Backends: **MySQL/MariaDB, PostgreSQL, SQLite** — same tri-dialect matrix as a
 composer require nandan108/attrecord-migrations
 ```
 
-Requires PHP 8.1+ and `nandan108/attrecord` `^0.17.1`. No other runtime dependencies.
+Requires PHP 8.1+ and `nandan108/attrecord` `^0.17.1 || ^0.18`. No other runtime dependencies.
 
 Footprint: `src/` is ~143 KB across 33 files (~89 KB of that is code — the other 38% is
 docblocks), so the published package is **~64 KB zipped**. That is on top of attrecord itself, and
