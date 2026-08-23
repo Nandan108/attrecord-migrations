@@ -138,7 +138,7 @@ final class EvolutionSqliteTest extends SqliteIntegrationTestCase
             ],
             'index_reshape' => [
                 'ddl'   => $this->rebuiltKitchenSink('("status", "created_at")', '("status")'),
-                'kinds' => ['drop_index', 'create_index'],
+                'kinds' => ['replace_index'],
                 'class' => ChangeClass::Destructive,
             ],
             'fk_action_change' => [

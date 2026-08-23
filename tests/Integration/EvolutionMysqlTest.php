@@ -87,7 +87,7 @@ final class EvolutionMysqlTest extends MysqlIntegrationTestCase
                     'DROP INDEX `idx_status_created` ON `mig_kitchen_sink`',
                     'CREATE INDEX `idx_status_created` ON `mig_kitchen_sink` (`status`)',
                 ],
-                'kinds' => ['drop_index', 'create_index'],
+                'kinds' => ['replace_index'],
                 'class' => ChangeClass::Destructive,
             ],
             'fk_action_change' => [

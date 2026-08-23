@@ -29,6 +29,8 @@ final class PlannedChange
         'drop_column',
         'create_index',
         'drop_index',
+        'rename_index',
+        'replace_index',
         'add_foreign_key',
         'drop_foreign_key',
         'rename_foreign_key',

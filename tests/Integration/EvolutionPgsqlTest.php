@@ -94,7 +94,7 @@ final class EvolutionPgsqlTest extends PgsqlIntegrationTestCase
                     'DROP INDEX "idx_status_created"',
                     'CREATE INDEX "idx_status_created" ON "mig_kitchen_sink" ("status")',
                 ],
-                'kinds' => ['drop_index', 'create_index'],
+                'kinds' => ['replace_index'],
                 'class' => ChangeClass::Destructive,
             ],
             'fk_action_change' => [

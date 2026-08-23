@@ -6,6 +6,62 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-23
+
+**Index renames, and three answers the differ could not work out for itself.** Requires attrecord
+`^0.19`, which carries the declarations.
+
+**Contains a behaviour change**: an index rename now plans as one `rename_index` change, and a
+reshaped index as one `replace_index`, where both previously planned as a separate drop and create.
+
+### Fixed
+
+- **An index rename no longer half-applies.** Renaming an index emitted a `create_index` (Safe) and
+  a `drop_index` (Destructive), so a run at the default ceiling built the new index and left the old
+  one in place — permanently, since on the next pass the leftover simply reads as an ordinary
+  undeclared index. Nothing errored; the table just carried two identical indexes and paid for both
+  on every write.
+
+  Unmatched adds and drops are now paired the way foreign keys already were: identical shape on both
+  sides means the same index under a new name, emitted as **one** `rename_index`. Ambiguity (two
+  identically-shaped orphans) declines the pairing and falls back to plain create + drop.
+
+  Almost every engine renames in the catalogue — `RENAME INDEX` on MySQL 5.7+/MariaDB 10.5.2+,
+  `ALTER INDEX … RENAME TO` on PostgreSQL. SQLite creates the new index before dropping the old, the
+  opposite order to the foreign-key fallback and for the mirror-image reason: an index is never left
+  momentarily missing.
+
+### Added
+
+- **`renamedFrom:` on `#[Index]` / `#[UniqueKey]`** (attrecord 0.19.0) beats the shape heuristic, and
+  is the only thing that survives an index being renamed **and** reshaped in one release — at that
+  point nothing about the two shapes relates them. A catalogue rename keeps the live columns, so a
+  declared rename whose shape also changed is emitted as a rebuild under the new name rather than a
+  rename.
+
+- **`#[Absent(...)]` reclassifies a drop by answering the ownership question.** An index or unique
+  key declared absent drops at the **Safe** ceiling; undeclared it stays Destructive, because an
+  index forbids nothing and so contradicts nothing — it is as likely to be an operator's tuning
+  index, and dropping that degrades a query plan silently. A foreign key or CHECK was already Safe
+  (0.7.0), so there it only sharpens the reason. **A column stays Destructive**: saying you meant it
+  does not bring the values back. What the declaration buys there is provenance — the plan now
+  distinguishes `column declared absent since 1.4.0` from `column exists live but is not declared`,
+  so an operator reading a Destructive plan can tell the deliberate removal from the surprise.
+
+- **`#[Unmanaged(...)]` excludes one named object from convergence** — never dropped, never
+  converged, never reported. `PartiallyDeclared` answers the same question for a whole table and
+  buys its silence by going quiet about all drift there; naming one object leaves everything else
+  under the differ's eye. Prefer it wherever the objects can be named.
+
+### Changed
+
+- **A reshaped index is one `replace_index` change** carrying both statements, not a drop plus a
+  create. Emitted separately they could be authorised separately, and a ceiling admitting the drop
+  alone would leave the table with neither the live shape nor the desired one — the same reasoning
+  that merged `replace_foreign_key` in 0.7.0.
+
+- `PlannedChange::KINDS` gains `rename_index` and `replace_index`.
+
 ## [0.7.0] - 2026-08-21
 
 Two findings from a consumer's real migration — a goods receipt's parent generalising from a hard
@@ -505,7 +561,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.2...v0.6.0

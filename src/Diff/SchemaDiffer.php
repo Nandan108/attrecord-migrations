@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Diff;
 
+use Nandan108\Attrecord\Enum\SchemaObjectKind;
 use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
 use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\Attrecord\SqlDialect;
 use Nandan108\AttrecordMigrations\Emit\AlterEmitter;
 use Nandan108\AttrecordMigrations\Live\LiveForeignKey;
+use Nandan108\AttrecordMigrations\Live\LiveIndex;
 use Nandan108\AttrecordMigrations\Live\LiveTable;
 use Nandan108\AttrecordMigrations\Normalize\ColumnNormalizer;
 use Nandan108\AttrecordMigrations\Normalize\ColumnTuple;
@@ -25,8 +27,11 @@ use Nandan108\AttrecordMigrations\Plan\PlannedChange;
  * without the needed ALTER — becomes a **Manual** change with a reason and no SQL. The differ
  * never guesses an ALTER.
  *
- * Renames are never inferred: only a `#[Column(renamedFrom: 'old')]` declaration produces a
- * data-preserving rename (prior art is unanimous that drop+add similarity inference is a trap).
+ * A **column** rename is never inferred: only a `#[Column(renamedFrom: 'old')]` declaration produces
+ * a data-preserving rename (prior art is unanimous that drop+add similarity inference is a trap).
+ * Indexes and constraints are different in kind — they carry no data, so a wrong guess costs a
+ * rebuild rather than rows — and there an identically-shaped orphan on each side is read as a
+ * rename, with `renamedFrom:` available for the case where the shape changed too.
  *
  * @see the design contract — the design contract this implements.
  * @see https://github.com/Nandan108/attrecord/blob/main/docs/arch-migrations.md — the design contract this implements.
@@ -144,15 +149,25 @@ final class SchemaDiffer
             if ($partiallyDeclared) {
                 break; // the undeclared columns belong to someone else — see PartiallyDeclared
             }
+            if (isset($desired->unmanaged[SchemaObjectKind::Column->value][$colName])) {
+                continue; // another authority maintains it — see Attribute\Unmanaged
+            }
             if (!isset($desired->columns[$colName]) && !isset($liveColumnsClaimed[$colName])) {
                 $statements = $this->emitter->dropColumn($table, $colName);
+                $absent = $desired->absent[SchemaObjectKind::Column->value][$colName] ?? null;
                 $changes[] = new PlannedChange(
                     $table,
                     'drop_column',
                     $colName,
+                    // Destructive either way: saying you meant it does not bring the values back,
+                    // and this is the one kind of drop where the ceiling is protecting data rather
+                    // than adjudicating ownership. What the declaration changes is what an operator
+                    // reading the plan can tell — the deliberate removal from the surprise.
                     ChangeClass::Destructive,
                     $statements,
-                    'column exists live but is not declared — dropping destroys its data',
+                    null === $absent
+                        ? 'column exists live but is not declared — dropping destroys its data'
+                        : 'column '.$absent->describe().' — dropping destroys its data',
                 );
             }
         }
@@ -169,69 +184,111 @@ final class SchemaDiffer
             $desiredIndexes[$name] = ['columns' => $cols, 'unique' => false];
         }
 
+        // Unmatched-by-name entries are held back and paired below, exactly as the foreign keys
+        // are: an index *rename* looks like an unrelated index appearing and another disappearing,
+        // and those classify differently (create is Safe, drop is Destructive), so emitting them
+        // independently lets a Safe-ceiling run apply half a rename — building the new index while
+        // the old one stays behind forever, silently doubling the write cost of the table.
+        /** @var array<array-key, array{columns: list<string>, unique: bool}> $pendingIndexAdds */
+        $pendingIndexAdds = [];
+        /** @var array<array-key, LiveIndex> $pendingIndexDrops */
+        $pendingIndexDrops = [];
+
         foreach ($desiredIndexes as $name => $spec) {
             // A declared name that looks numeric arrives as an int (PHP array-key coercion), and
             // every emitter below is typed for a string.
             $name = (string) $name;
             $liveIx = $live->indexes[$name] ?? null;
             if (null === $liveIx) {
-                $changes[] = new PlannedChange(
-                    $table,
-                    'create_index',
-                    $name,
-                    ChangeClass::Safe,
-                    $this->emitter->createIndex($table, $name, $spec['columns'], $spec['unique']),
-                    ($spec['unique'] ? 'unique key' : 'index').' missing',
-                    mayRejectExistingRows: $spec['unique'],
-                );
+                $pendingIndexAdds[$name] = $spec;
                 continue;
             }
             if ($liveIx->columns !== $spec['columns'] || $liveIx->unique !== $spec['unique']) {
+                // One change carrying both statements — same reasoning as `replace_foreign_key`
+                // below: a ceiling that admitted the drop alone would leave the table with no
+                // index of that name at all, which is neither the live shape nor the desired one.
                 $changes[] = new PlannedChange(
                     $table,
-                    'drop_index',
+                    'replace_index',
                     $name,
                     ChangeClass::Destructive,
-                    $this->emitter->dropIndex($table, $name),
+                    [
+                        ...$this->emitter->dropIndex($table, $name),
+                        ...$this->emitter->createIndex($table, $name, $spec['columns'], $spec['unique']),
+                    ],
                     sprintf(
-                        'index shape differs (live: [%s]%s, desired: [%s]%s) — recreate',
+                        'index shape differs (live: [%s]%s, desired: [%s]%s) — dropped and recreated',
                         implode(', ', $liveIx->columns),
                         $liveIx->unique ? ' unique' : '',
                         implode(', ', $spec['columns']),
                         $spec['unique'] ? ' unique' : '',
                     ),
-                );
-                $changes[] = new PlannedChange(
-                    $table,
-                    'create_index',
-                    $name,
-                    ChangeClass::Destructive,
-                    $this->emitter->createIndex($table, $name, $spec['columns'], $spec['unique']),
-                    'recreate with the desired shape',
                     mayRejectExistingRows: $spec['unique'],
                 );
             }
         }
-        foreach (array_keys($live->indexes) as $name) {
-            $name = (string) $name; // numeric-string array key -> int; see above
-            if ($partiallyDeclared) {
-                break; // see PartiallyDeclared — a computed column brings its own index
-            }
-            if (!isset($desiredIndexes[$name])) {
+
+        if (!$partiallyDeclared) {
+            foreach ($live->indexes as $name => $liveIx) {
+                $name = (string) $name; // numeric-string array key -> int; see above
+                if (isset($desiredIndexes[$name])) {
+                    continue;
+                }
                 // MySQL implicitly creates a supporting index for every FK constraint (named after
                 // it) when none exists — that index is FK plumbing, not drift.
                 if (self::isForeignKeyPlumbing($live, $name)) {
                     continue;
                 }
+                if (isset($desired->unmanaged[SchemaObjectKind::Index->value][$name])
+                    || isset($desired->unmanaged[SchemaObjectKind::UniqueKey->value][$name])) {
+                    continue; // the DBA's tuning index, declared as theirs — see Attribute\Unmanaged
+                }
+                $pendingIndexDrops[$name] = $liveIx;
+            }
+        }
+
+        foreach ($pendingIndexAdds as $newName => $spec) {
+            $newName = (string) $newName; // numeric-string array key -> int; see above
+            $oldName = self::indexRenameSource($desired, $newName, $spec, $pendingIndexDrops);
+            if (null === $oldName) {
                 $changes[] = new PlannedChange(
                     $table,
-                    'drop_index',
-                    $name,
-                    ChangeClass::Destructive,
-                    $this->emitter->dropIndex($table, $name),
-                    'index exists live but is not declared (it may be an operator-added tuning index — dropping requires opt-in)',
+                    'create_index',
+                    $newName,
+                    ChangeClass::Safe,
+                    $this->emitter->createIndex($table, $newName, $spec['columns'], $spec['unique']),
+                    ($spec['unique'] ? 'unique key' : 'index').' missing',
+                    mayRejectExistingRows: $spec['unique'],
                 );
+                continue;
             }
+            $wasDeclared = isset($desired->indexRenames[$newName]);
+            $fromLive = $pendingIndexDrops[$oldName];
+            unset($pendingIndexDrops[$oldName]);
+            $changes[] = $this->indexRename($table, $fromLive, $newName, $spec, $wasDeclared);
+        }
+
+        foreach ($pendingIndexDrops as $name => $liveIx) {
+            $name = (string) $name; // numeric-string array key -> int; see above
+            // Declared absent by either name for the kind: which of the two an engine calls a
+            // retired object is a detail the author has no reason to remember years later.
+            $absent = $desired->absent[SchemaObjectKind::Index->value][$name]
+                ?? $desired->absent[SchemaObjectKind::UniqueKey->value][$name]
+                ?? null;
+            $changes[] = new PlannedChange(
+                $table,
+                'drop_index',
+                $name,
+                // An index forbids nothing, so an unrecognised one contradicts nothing either and
+                // is as likely to be an operator's tuning index as our own leftover — dropping it
+                // costs a query plan and buys only tidiness. A declaration settles that question,
+                // and only a declaration can: see Attribute\Absent.
+                null === $absent ? ChangeClass::Destructive : ChangeClass::Safe,
+                $this->emitter->dropIndex($table, $name),
+                null === $absent
+                    ? ($liveIx->unique ? 'unique key' : 'index').' exists live but is not declared (it may be an operator-added tuning index — dropping requires opt-in)'
+                    : ($liveIx->unique ? 'unique key' : 'index').' '.$absent->describe(),
+            );
         }
 
         // --- Foreign keys (by constraint name). ---
@@ -289,6 +346,9 @@ final class SchemaDiffer
         if (!$partiallyDeclared) {
             foreach ($live->foreignKeys as $name => $liveFk) {
                 $name = (string) $name; // numeric-string array key -> int; see above
+                if (isset($desired->unmanaged[SchemaObjectKind::ForeignKey->value][$name])) {
+                    continue; // see Attribute\Unmanaged
+                }
                 if (!isset($desiredFks[$name])) {
                     $pendingDrops[$name] = $liveFk;
                 }
@@ -319,7 +379,15 @@ final class SchemaDiffer
                 $changes[] = $this->manual($table, $name, 'undeclared live foreign key; this engine cannot drop an FK in place');
                 continue;
             }
-            $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Safe, $drop, 'foreign key exists live but is not declared');
+            $absent = $desired->absent[SchemaObjectKind::ForeignKey->value][$name] ?? null;
+            $changes[] = new PlannedChange(
+                $table,
+                'drop_foreign_key',
+                $name,
+                ChangeClass::Safe,
+                $drop,
+                null === $absent ? 'foreign key exists live but is not declared' : 'foreign key '.$absent->describe(),
+            );
         }
 
         return [...$changes, ...$this->diffChecks($table, $desired, $live, $partiallyDeclared)];
@@ -385,6 +453,9 @@ final class SchemaDiffer
             if (isset($desired->checks[$name]) || $this->isEngineOwnedCheck($name, $live->checks[$name], $desired, $live)) {
                 continue;
             }
+            if (isset($desired->unmanaged[SchemaObjectKind::Check->value][$name])) {
+                continue; // see Attribute\Unmanaged
+            }
 
             $drop = $this->emitter->dropCheck($table, $name);
             if (null === $drop) {
@@ -395,7 +466,15 @@ final class SchemaDiffer
             // Safe for the same reason an undeclared foreign key is: a constraint drop costs no
             // data, and a rule the Records do not declare *contradicts* them — it forbids writes the
             // model permits. An undeclared index, which forbids nothing, stays Destructive.
-            $changes[] = new PlannedChange($table, 'drop_check', $name, ChangeClass::Safe, $drop, 'CHECK constraint exists live but is not declared');
+            $absent = $desired->absent[SchemaObjectKind::Check->value][$name] ?? null;
+            $changes[] = new PlannedChange(
+                $table,
+                'drop_check',
+                $name,
+                ChangeClass::Safe,
+                $drop,
+                null === $absent ? 'CHECK constraint exists live but is not declared' : 'CHECK constraint '.$absent->describe(),
+            );
         }
 
         return $changes;
@@ -675,6 +754,95 @@ final class SchemaDiffer
             self::canonAction($fk->onDelete),
             self::canonAction($fk->onUpdate),
         ];
+    }
+
+    /**
+     * Which live index a desired one is a rename *of*, or null when it is genuinely new.
+     *
+     * A declaration wins outright and is the only thing that survives renaming an index **and**
+     * changing its columns in the same release — at that point nothing about the two shapes says
+     * they are related. Failing that, an identically-shaped orphan on each side is taken as the
+     * rename, which covers the ordinary case without anyone having to declare anything.
+     *
+     * Inferring is safe here in a way it is not for a column: the outcome either way is one index
+     * of the desired shape, so guessing wrong costs a rebuild rather than data. A column rename is
+     * never inferred, for exactly the opposite reason.
+     *
+     * @param array{columns: list<string>, unique: bool} $spec
+     * @param array<array-key, LiveIndex>                $candidates
+     */
+    private static function indexRenameSource(TableSchema $desired, string $newName, array $spec, array $candidates): ?string
+    {
+        $declared = $desired->indexRenames[$newName] ?? null;
+        if (null !== $declared) {
+            // A declaration that names something not on offer — already applied on an earlier
+            // converge, or simply stale — is not an error: the index it describes is gone, which is
+            // what the declaration was asking for.
+            return isset($candidates[$declared->from]) ? $declared->from : null;
+        }
+
+        $found = null;
+        foreach ($candidates as $name => $live) {
+            if ($live->columns !== $spec['columns'] || $live->unique !== $spec['unique']) {
+                continue;
+            }
+            if (null !== $found) {
+                return null; // ambiguous — two identically-shaped orphans name no single source
+            }
+            $found = (string) $name;
+        }
+
+        return $found;
+    }
+
+    /**
+     * An index rename, emitted as **one** change so a ceiling decision applies to all of it.
+     *
+     * Every engine but SQLite renames in the catalogue, which is instant and touches no rows. The
+     * fallback builds the new index before dropping the old one — that order matters: it costs a
+     * transient period of double storage, and buys never leaving the table unindexed if the run
+     * stops between the two statements.
+     *
+     * @param array{columns: list<string>, unique: bool} $spec
+     */
+    private function indexRename(string $table, LiveIndex $from, string $to, array $spec, bool $declared): PlannedChange
+    {
+        $why = $declared ? 'declared rename' : 'same shape, so read as a rename';
+        // Renaming in the catalogue keeps the *live* columns, so it is only the right statement
+        // when those already match. A declared rename may also have changed shape — the case the
+        // shape heuristic cannot see and the declaration exists for — and there the index has to be
+        // rebuilt however cheap a rename would have been.
+        $sameShape = $from->columns === $spec['columns'] && $from->unique === $spec['unique'];
+        $native = $sameShape ? $this->emitter->renameIndex($table, $from->name, $to, $spec['unique']) : null;
+        if (null !== $native) {
+            return new PlannedChange(
+                $table,
+                'rename_index',
+                $to,
+                ChangeClass::Safe,
+                $native,
+                sprintf('%s from "%s" (%s) — catalogue-only on this engine', $spec['unique'] ? 'unique key' : 'index', $from->name, $why),
+            );
+        }
+
+        return new PlannedChange(
+            $table,
+            'rename_index',
+            $to,
+            ChangeClass::Safe,
+            [
+                ...$this->emitter->createIndex($table, $to, $spec['columns'], $spec['unique']),
+                ...$this->emitter->dropIndex($table, $from->name),
+            ],
+            sprintf(
+                '%s from "%s" (%s) — %s, so it is rebuilt then dropped',
+                $spec['unique'] ? 'unique key' : 'index',
+                $from->name,
+                $why,
+                $sameShape ? 'this engine cannot rename' : 'its shape changed too',
+            ),
+            mayRejectExistingRows: $spec['unique'],
+        );
     }
 
     /**

@@ -71,7 +71,7 @@ Every planned change carries a class; `apply(allow:)` is a **ceiling** over the 
 | Class | Applied | Examples |
 | --- | --- | --- |
 | `Safe` (default) | yes | `ADD COLUMN` (nullable/defaulted), `ADD INDEX`, widenings (`VARCHAR(64)→(191)`, `SMALLINT→INT`), default changes, declared renames. `ADD UNIQUE`/`ADD FK`/`ADD CHECK` are Safe but flagged `mayRejectExistingRows` — they can *loudly* reject (atomic failure, never silent loss). **Constraint drops are here too** — foreign keys and CHECKs alike: the drop costs no data, and an undeclared constraint contradicts the model rather than adding to it (see below). |
-| `Destructive` | opt-in only | `DROP COLUMN`, narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index drops. |
+| `Destructive` | opt-in only | `DROP COLUMN` (declared absent or not), narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index drops. |
 | `Assisted` | opt-in, its own ceiling | A changed generation expression. The statement is known and carried; what it needs is a person who read it and said yes. **Not** reached by opting into `Destructive` — a widened destructive policy must not sweep in changes chosen deliberately. |
 | `Manual` | **never** | PK changes, auto-increment drift, anything the pipeline is *unsure* about, SQLite rebuild-only changes. No SQL — a reason to read, not a statement to run, which is why no ceiling admits it. |
 
@@ -92,17 +92,24 @@ an `ON DELETE CASCADE` pointing at a table the column no longer belongs to, quie
 the next parent delete.
 
 The line is *contradiction*, not losslessness, which is why an undeclared **index** stays
-`Destructive`: it forbids nothing, so it adds to the model rather than overruling it. Foreign keys
-and CHECKs both forbid, and both drop at the default ceiling.
+`Destructive`: it forbids nothing, so it adds to the model rather than overruling it. Being wrong
+about one is also expensive and invisible — it may be an operator's tuning index, and dropping that
+degrades a query plan under load rather than raising anything. Foreign keys and CHECKs both forbid,
+and both drop at the default ceiling.
 
-"I do not own this table" is a different axis entirely, and `PartiallyDeclared` is where it lives:
-declare a Record as partially declared and nothing undeclared is proposed for dropping — constraints
-included.
+Ownership is a separate axis, with two granularities: `#[Unmanaged]` names one object as somebody
+else's, `PartiallyDeclared` says it of a whole table. Prefer the first where you can name what is not
+yours — the interface buys its silence by going quiet about *all* drift on that table.
 
-A foreign key whose *shape* changed is one `replace_foreign_key` carrying both statements, not a
-separate drop and add, so no ceiling can authorise half of a replacement.
+A foreign key or index whose *shape* changed is one `replace_foreign_key` / `replace_index` carrying
+both statements, not a separate drop and add, so no ceiling can authorise half of a replacement.
 
-## Renames are declared, never inferred
+## Saying what the Records do not
+
+A schema describes what exists. Three things a differ has to know are in no schema at all, and the
+attrecord attributes that declare them (0.19.0) are inert until this package reads them.
+
+**A column rename is declared, never inferred.**
 
 ```php
 #[Column(ColumnType::VarChar, length: 64, renamedFrom: 'sku_code')]
@@ -110,8 +117,38 @@ public string $sku = '';
 ```
 
 produces a data-preserving `RENAME`/`CHANGE COLUMN` instead of a destructive drop+add. Inference
-from drop+add similarity is a known trap (Skeema refuses it; Django prompts a human); the
-`renamedFrom` marker is permanent, cheap documentation of the column's history.
+from drop+add similarity is a known trap (Skeema refuses it; Django prompts a human).
+
+**An index rename *is* inferred, because a wrong guess there costs a rebuild rather than rows.** An
+orphaned add and an orphaned drop of identical shape are the same index, emitted as one
+`rename_index`; ambiguity falls back to plain create + drop. Declare it when the shape changed too,
+which is the case no heuristic can see:
+
+```php
+#[Index('idx_status_date', columns: ['status', 'created_at'], renamedFrom: 'idx_status', renamedSince: '1.4.0')]
+```
+
+**A retired object is declared absent**, which is what makes dropping it safe rather than a guess:
+
+```php
+#[Absent(index: ['idx_legacy_sku', 'idx_legacy_isbn'], since: '1.4.0')]
+#[Absent(column: 'po_id', since: '2.0.0')]
+```
+
+An index or unique key declared absent drops at the **Safe** ceiling. A column does not — saying you
+meant it does not bring the values back — but the plan now says `declared absent since 2.0.0` rather
+than `exists live but is not declared`, so a Destructive plan distinguishes the deliberate removal
+from the surprise.
+
+Deleting an `#[Absent]` line later is safe: the object falls back to the undeclared path, still
+reported, just no longer automatic. The exception is a `PartiallyDeclared` table, where nothing
+undeclared is reported at all.
+
+**An object somebody else owns is declared unmanaged:**
+
+```php
+#[Unmanaged(index: 'idx_dba_status_covering')]
+```
 
 ## Change-attached steps
 
@@ -216,6 +253,10 @@ still added, declared ones still converge, but nothing undeclared is ever propos
 columns, indexes and constraints alike. The trade-off is one-directional, which is why it is
 opt-in per Record: on such a table, a genuinely stray column from an old version is never
 surfaced either. Prefer describing the columns when you can; this is the fallback.
+
+If you *can* name the objects that are not yours, `#[Unmanaged]` is the better tool — it excludes
+exactly those and leaves the rest of the table under the differ's eye. Reach for the interface only
+when the shape is genuinely computed and cannot be named ahead of time.
 
 (The two do not combine: a `TableSchema` you built is taken at face value, since the point of
 building it is that the columns are now described.)

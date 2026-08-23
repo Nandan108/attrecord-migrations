@@ -69,6 +69,14 @@ final class SqliteAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
+    public function renameIndex(string $table, string $from, string $to, bool $unique): ?array
+    {
+        // No rename here — the differ creates the new index and drops the old one as a single
+        // change. The rebuild that costs elsewhere is cheap on the databases SQLite is used for.
+        return null;
+    }
+
+    #[\Override]
     public function addForeignKey(string $table, ForeignKeyDefinition $fk): array
     {
         return []; // unreachable in practice: the differ routes FK changes to Manual on SQLite

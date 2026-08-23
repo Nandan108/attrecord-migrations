@@ -61,6 +61,13 @@ final class MysqlAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
+    public function renameIndex(string $table, string $from, string $to, bool $unique): ?array
+    {
+        // A unique key is an index here, so one form covers both. MySQL 5.7+, MariaDB 10.5.2+.
+        return ['ALTER TABLE '.$this->q($table).' RENAME INDEX '.$this->q($from).' TO '.$this->q($to)];
+    }
+
+    #[\Override]
     public function addForeignKey(string $table, ForeignKeyDefinition $fk): array
     {
         return ['ALTER TABLE '.$this->q($table).' ADD '.$this->dialect->buildForeignKeyLine($fk)];

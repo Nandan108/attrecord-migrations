@@ -108,6 +108,16 @@ final class PgsqlAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
+    public function renameIndex(string $table, string $from, string $to, bool $unique): ?array
+    {
+        // Split by kind rather than emitted defensively like dropIndex above: there is no
+        // IF EXISTS form of either rename, so emitting both would guarantee one of them errors.
+        return $unique
+            ? ['ALTER TABLE '.$this->q($table).' RENAME CONSTRAINT '.$this->q($from).' TO '.$this->q($to)]
+            : ['ALTER INDEX '.$this->q($from).' RENAME TO '.$this->q($to)];
+    }
+
+    #[\Override]
     public function addForeignKey(string $table, ForeignKeyDefinition $fk): array
     {
         return ['ALTER TABLE '.$this->q($table).' ADD '.$this->dialect->buildForeignKeyLine($fk)];

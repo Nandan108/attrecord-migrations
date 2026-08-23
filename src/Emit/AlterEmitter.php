@@ -46,6 +46,23 @@ interface AlterEmitter
     /** @return list<string> */
     public function dropIndex(string $table, string $name): array;
 
+    /**
+     * Rename an index in place, or null when the engine has no such operation (SQLite), leaving the
+     * differ to create-then-drop instead.
+     *
+     * Unlike {@see renameForeignKey()} this is available almost everywhere — `RENAME INDEX` on
+     * MySQL 5.7+/MariaDB 10.5.2+, `ALTER INDEX … RENAME TO` on PostgreSQL — and everywhere it
+     * exists it is catalogue-only. That matters more here than it does for a constraint: the
+     * fallback is a full index **build**, so an engine that can rename turns a rewrite of the whole
+     * table's worth of entries into a name change.
+     *
+     * `$unique` is passed because the engines disagree about what a unique key *is*: PostgreSQL
+     * models it as a table constraint (renamed through `ALTER TABLE`), MySQL as an ordinary index.
+     *
+     * @return list<string>|null
+     */
+    public function renameIndex(string $table, string $from, string $to, bool $unique): ?array;
+
     /** @return list<string> */
     public function addForeignKey(string $table, ForeignKeyDefinition $fk): array;
 
