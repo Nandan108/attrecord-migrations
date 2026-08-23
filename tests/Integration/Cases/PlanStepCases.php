@@ -103,7 +103,11 @@ trait PlanStepCases
         try {
             $migrator->apply($plan->withStep(
                 before: 'add_column mig_kitchen_sink.delta',
-                run: static fn (): never => throw new \RuntimeException('the backfill blew up'),
+                // A statement, not `fn (): never => throw …`: PHP 8.1 rejects that arrow-function
+                // form outright, and 8.1 is this package's floor.
+                run: static function (): void {
+                    throw new \RuntimeException('the backfill blew up');
+                },
             ));
             self::fail('a failing step must stop the run');
         } catch (MigrationFailedException $e) {
@@ -148,7 +152,9 @@ trait PlanStepCases
 
         $run = $migrator->apply($plan->withStep(
             after: 'add_column mig_kitchen_sink.delta',
-            run: static fn (): null => null,
+            run: static function (DbSession $session): void {
+                $session->inTransaction();
+            },
         ));
 
         $labels = array_map(static fn (array $o): string => (string) ($o['sql'] ?? ''), $run->statements_json);
