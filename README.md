@@ -70,14 +70,37 @@ Every planned change carries a class; `apply(allow:)` is a **ceiling** over the 
 
 | Class | Applied | Examples |
 | --- | --- | --- |
-| `Safe` (default) | yes | `ADD COLUMN` (nullable/defaulted), `ADD INDEX`, widenings (`VARCHAR(64)→(191)`, `SMALLINT→INT`), default changes, declared renames. `ADD UNIQUE`/`ADD FK`/`ADD CHECK` are Safe but flagged `mayRejectExistingRows` — they can *loudly* reject (atomic failure, never silent loss). |
-| `Destructive` | opt-in only | `DROP COLUMN`, narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index and undeclared-CHECK drops. |
+| `Safe` (default) | yes | `ADD COLUMN` (nullable/defaulted), `ADD INDEX`, widenings (`VARCHAR(64)→(191)`, `SMALLINT→INT`), default changes, declared renames. `ADD UNIQUE`/`ADD FK`/`ADD CHECK` are Safe but flagged `mayRejectExistingRows` — they can *loudly* reject (atomic failure, never silent loss). **Constraint drops are here too** — foreign keys and CHECKs alike: the drop costs no data, and an undeclared constraint contradicts the model rather than adding to it (see below). |
+| `Destructive` | opt-in only | `DROP COLUMN`, narrowing conversions, `NULL→NOT NULL` tightening, undeclared-index drops. |
 | `Assisted` | opt-in, its own ceiling | A changed generation expression. The statement is known and carried; what it needs is a person who read it and said yes. **Not** reached by opting into `Destructive` — a widened destructive policy must not sweep in changes chosen deliberately. |
 | `Manual` | **never** | PK changes, auto-increment drift, anything the pipeline is *unsure* about, SQLite rebuild-only changes. No SQL — a reason to read, not a statement to run, which is why no ceiling admits it. |
 
 The pipeline's bias is **fail-safe**: an unparseable live type or ambiguous facet degrades to
 Manual with a reason. It never guesses an ALTER (the Doctrine `schema-tool:update` lesson —
 normalization + classification are the load-bearing parts, not the diff).
+
+### Why a constraint drop is Safe
+
+Dropping a constraint removes no row and no column value, and re-adding it a moment later always
+succeeds, because the data that satisfied it still does. "Drops" in the `Destructive` row means
+drops of *data-bearing* things — columns, tables.
+
+The sharper reason is what an undeclared constraint **is**: a rule forbidding writes the Records
+permit, so leaving it in place is drift that silently overrules the schema. It is not hypothetical —
+MySQL's `CHANGE COLUMN` carries a column's constraints along with it, so a declared rename can leave
+an `ON DELETE CASCADE` pointing at a table the column no longer belongs to, quietly deleting rows on
+the next parent delete.
+
+The line is *contradiction*, not losslessness, which is why an undeclared **index** stays
+`Destructive`: it forbids nothing, so it adds to the model rather than overruling it. Foreign keys
+and CHECKs both forbid, and both drop at the default ceiling.
+
+"I do not own this table" is a different axis entirely, and `PartiallyDeclared` is where it lives:
+declare a Record as partially declared and nothing undeclared is proposed for dropping — constraints
+included.
+
+A foreign key whose *shape* changed is one `replace_foreign_key` carrying both statements, not a
+separate drop and add, so no ceiling can authorise half of a replacement.
 
 ## Renames are declared, never inferred
 
@@ -89,6 +112,42 @@ public string $sku = '';
 produces a data-preserving `RENAME`/`CHANGE COLUMN` instead of a destructive drop+add. Inference
 from drop+add similarity is a known trap (Skeema refuses it; Django prompts a human); the
 `renamedFrom` marker is permanent, cheap documentation of the column's history.
+
+## Change-attached steps
+
+When a data transform rides a schema change, the schema state *is* the marker — a `TEXT` column is
+the unwrapped state, `JSON` the wrapped one — so attach the transform to the change rather than
+versioning it:
+
+```php
+$plan = $migrator->plan($classes)
+    // MySQL's MODIFY … JSON validates existing values, so wrap them first.
+    ->withStep(
+        before: 'modify_column orders.payload',
+        run: fn (DbSession $s) => $s->exec("UPDATE orders SET payload = JSON_OBJECT('data', payload)"),
+    )
+    // The other placement: backfill a column that did not exist a statement ago.
+    ->withStep(
+        after: 'add_column orders.source_ref_type_id',
+        run: fn (DbSession $s) => $s->exec('UPDATE orders SET source_ref_type_id = 1 WHERE source_id IS NOT NULL'),
+    );
+
+$migrator->apply($plan);
+```
+
+The selector is `"kind table.subject"` in the same vocabulary a plan prints, so it can be read off
+`plan()`'s own output. Steps run at their position in the apply order, are recorded in the run
+ledger, and a failing step stops the run and is reported against the change it was attached to.
+
+**A selector matching no change is a no-op, on purpose.** On the second boot of a converged install
+the change was applied long ago and the plan is empty, while your code still attaches its step —
+erroring there would fail every subsequent boot. The mistake that *can* be caught, a kind that does
+not exist, is refused when you write it; unmatched steps are recorded, so "my backfill never ran" is
+answerable afterwards.
+
+**The pair is not atomic on MySQL or MariaDB**, and no API can make it so: DDL auto-commits there, so
+a step and its change cannot share a transaction. PostgreSQL and SQLite have transactional DDL and
+let a caller wrap the whole apply. Write steps to be re-runnable where the transform allows it.
 
 ## Run-once data steps
 

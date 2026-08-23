@@ -102,14 +102,14 @@ final class EvolutionPgsqlTest extends PgsqlIntegrationTestCase
                     $alter("DROP CONSTRAINT \"{$fk}\""),
                     $alter("ADD CONSTRAINT \"{$fk}\" FOREIGN KEY (\"ref_id\") REFERENCES \"mig_ref_targets\" (\"id\") ON DELETE CASCADE"),
                 ],
-                'kinds' => ['drop_foreign_key', 'add_foreign_key'],
-                'class' => ChangeClass::Destructive,
+                'kinds' => ['replace_foreign_key'],
+                'class' => ChangeClass::Safe,
             ],
             'undeclared_fk' => [
                 // Unlike MySQL, PG creates no implicit supporting index — one round converges.
                 'ddl'   => [$alter('ADD CONSTRAINT "fk_extra_ref" FOREIGN KEY ("ref_id") REFERENCES "mig_ref_targets" ("id")')],
                 'kinds' => ['drop_foreign_key'],
-                'class' => ChangeClass::Destructive,
+                'class' => ChangeClass::Safe,
             ],
         ];
     }

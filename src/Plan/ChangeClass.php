@@ -33,10 +33,25 @@ namespace Nandan108\AttrecordMigrations\Plan;
  */
 enum ChangeClass: string
 {
-    /** Additive or metadata-only; cannot destroy data (may loudly reject existing rows — see PlannedChange::$mayRejectExistingRows). */
+    /**
+     * Additive or metadata-only; cannot destroy data (may loudly reject existing rows — see
+     * `PlannedChange::$mayRejectExistingRows`).
+     *
+     * **A constraint drop belongs here**, which is less obvious than it sounds. Dropping a foreign
+     * key removes no row and no column value, and re-adding it a moment later always succeeds,
+     * because the data that satisfied it still does. What the word "drops" means in `Destructive`
+     * below is drops of *data-bearing* things.
+     *
+     * The reason this is safe rather than merely lossless: an undeclared foreign key **contradicts**
+     * the declared model — it forbids writes the Records permit — so leaving it is drift that
+     * silently overrules the schema. That is different from an undeclared *index*, which adds to the
+     * model without contradicting it, and which is why the two are not classified alike here. A
+     * table the library does not fully own is a question of authority, not of loss, and
+     * {@see \Nandan108\AttrecordMigrations\PartiallyDeclared} is where that belongs.
+     */
     case Safe = 'safe';
 
-    /** Potentially lossy (drops, narrowing conversions, nullable tightening); requires explicit opt-in. */
+    /** Potentially lossy — drops of data-bearing things (columns, tables), narrowing conversions, nullable tightening; requires explicit opt-in. */
     case Destructive = 'destructive';
 
     /**

@@ -95,13 +95,18 @@ final class EvolutionMysqlTest extends MysqlIntegrationTestCase
                     "ALTER TABLE `mig_kitchen_sink` DROP FOREIGN KEY `{$fk}`",
                     "ALTER TABLE `mig_kitchen_sink` ADD CONSTRAINT `{$fk}` FOREIGN KEY (`ref_id`) REFERENCES `mig_ref_targets` (`id`) ON DELETE CASCADE",
                 ],
-                'kinds' => ['drop_foreign_key', 'add_foreign_key'],
-                'class' => ChangeClass::Destructive,
+                // One change, not two: the net effect is a constraint replacement, and emitting the
+                // halves separately would let a ceiling authorise the drop alone.
+                'kinds' => ['replace_foreign_key'],
+                'class' => ChangeClass::Safe,
             ],
             'undeclared_fk' => [
                 'ddl'   => ['ALTER TABLE `mig_kitchen_sink` ADD CONSTRAINT `fk_extra_ref` FOREIGN KEY (`ref_id`) REFERENCES `mig_ref_targets` (`id`)'],
                 'kinds' => ['drop_foreign_key'],
-                'class' => ChangeClass::Destructive,
+                // Safe: the drop costs no data, and an undeclared foreign key contradicts the
+                // declared model rather than adding to it — leaving it is drift that overrules
+                // the Records. `PartiallyDeclared` is where "I do not own this table" belongs.
+                'class' => ChangeClass::Safe,
                 // The FK's supporting index outlives the constraint here and ends up as the only
                 // index covering `ref_id` — still required by the FK the Records *do* declare. It
                 // must be recognized as plumbing by shape, not by name, or convergence proposes a

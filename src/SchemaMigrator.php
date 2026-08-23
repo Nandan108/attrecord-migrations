@@ -15,6 +15,7 @@ use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\Plan\DependencyOrder;
 use Nandan108\AttrecordMigrations\Plan\Plan;
 use Nandan108\AttrecordMigrations\Plan\PlannedChange;
+use Nandan108\AttrecordMigrations\Plan\PlanStep;
 
 /**
  * The facade (the design contract §3): `plan()` / `apply()` / `dataStep()` / `fingerprint()`.
@@ -135,6 +136,16 @@ final class SchemaMigrator
                     if (!$change->class->withinCeiling($allow)) {
                         continue;
                     }
+
+                    // A step runs at its position relative to the change, never merely "somewhere in
+                    // the run": wrap-before-ALTER and backfill-after-ADD are both real, and each is
+                    // wrong in the other's place.
+                    [$stepOutcomes, $failure] = $this->runSteps($plan->stepsFor($change, true), $change);
+                    $outcomes = [...$outcomes, ...$stepOutcomes];
+                    if (null !== $failure) {
+                        break;
+                    }
+
                     foreach ($change->statements as $sql) {
                         try {
                             $this->connection->session->exec($sql);
@@ -142,9 +153,32 @@ final class SchemaMigrator
                         } catch (\Throwable $e) {
                             $outcomes[] = self::outcome($change, $sql, false, $e->getMessage());
                             $failure = new MigrationFailedException($change, $sql, $e);
-                            break 2;
+                            break;
                         }
                     }
+                    if (null !== $failure) {
+                        break;
+                    }
+
+                    [$stepOutcomes, $failure] = $this->runSteps($plan->stepsFor($change, false), $change);
+                    $outcomes = [...$outcomes, ...$stepOutcomes];
+                    if (null !== $failure) {
+                        break;
+                    }
+                }
+
+                // A step whose change is not in this plan did not run. That is the normal state on a
+                // converged install — the change was applied long ago — so it is not an error, but
+                // it is recorded, because "my backfill never ran" should be answerable afterwards
+                // rather than a matter of reasoning about what the plan contained.
+                foreach ($plan->unmatchedSteps() as $step) {
+                    $outcomes[] = [
+                        'kind'      => 'step',
+                        'subject'   => $step->selector,
+                        'sql'       => '(step)',
+                        'ok'        => true,
+                        'unmatched' => true,
+                    ];
                 }
 
                 $run->statements_json = $outcomes;
@@ -247,6 +281,37 @@ final class SchemaMigrator
             }
         }
         $this->ledgerInstalled = true;
+    }
+
+    /**
+     * Run the steps attached to one change, in attachment order.
+     *
+     * A step's exception is reported as a {@see MigrationFailedException} against the change it was
+     * attached to, because that is the position a reader needs in order to know what the database
+     * now looks like: on MySQL the DDL either side of it is already committed and is not coming
+     * back.
+     *
+     * @param list<PlanStep> $steps
+     *
+     * @return array{list<array<string, mixed>>, MigrationFailedException|null} the outcomes to record, and the failure that stopped the run
+     */
+    private function runSteps(array $steps, PlannedChange $change): array
+    {
+        $outcomes = [];
+
+        foreach ($steps as $step) {
+            $label = ($step->runBefore ? 'before ' : 'after ').$step->selector;
+            try {
+                ($step->run)($this->connection->session);
+                $outcomes[] = self::outcome($change, $label, true);
+            } catch (\Throwable $e) {
+                $outcomes[] = self::outcome($change, $label, false, $e->getMessage());
+
+                return [$outcomes, new MigrationFailedException($change, $label, $e)];
+            }
+        }
+
+        return [$outcomes, null];
     }
 
     /** @return array<string, mixed> */

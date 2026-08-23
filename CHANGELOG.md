@@ -6,6 +6,79 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-21
+
+Two findings from a consumer's real migration — a goods receipt's parent generalising from a hard
+foreign key to a polymorphic, deliberately FK-less reference.
+
+**Contains a behaviour change**: foreign-key drops now run at the default `Safe` ceiling, so an
+`apply()` that previously left them pending will apply them. That is the point of the change, and it
+is why this is a minor rather than a patch.
+
+### Changed
+
+- **A constraint drop is `Safe`, not `Destructive`** — foreign keys and CHECKs alike. By the
+  classification's own criterion they were on the wrong shelf: dropping a constraint removes no row
+  and no column value, and re-adding it immediately always succeeds, because the data that satisfied
+  it still does. "Drops" in the `Destructive` description means drops of *data-bearing* things.
+
+  The sharper reason is what an undeclared foreign key **is**: a rule forbidding writes the Records
+  permit, so leaving it is drift that silently overrules the declared schema — and it does damage.
+  MySQL's `CHANGE COLUMN` carries a column's constraints along with it, so a *declared rename* can
+  leave an `ON DELETE CASCADE` aimed at a table the column no longer belongs to. Every existing row
+  looks fine; the next parent delete quietly removes children that stopped being its children. The
+  differ noticed that constraint and then declined to drop it, because dropping was `Destructive`.
+
+  Four sites move, not one: the undeclared-FK drop, the shape-differs recreate, the add-then-drop
+  fallback used for a rename on engines with no `RENAME CONSTRAINT`, and the undeclared-CHECK drop. The last of those
+  was `Destructive` while the identical plain `add_foreign_key` was already `Safe` with
+  `mayRejectExistingRows` — classifying a pair harder than its own riskiest half.
+
+  The line drawn is **contradiction, not losslessness**, which is why an undeclared *index* stays
+  `Destructive`: it forbids nothing, so it adds to the model instead of overruling it. Foreign keys
+  and CHECKs both forbid. (The report that prompted this only raised foreign keys; extending it to
+  CHECKs is what keeps the criterion coherent rather than leaving the same argument half-applied.)
+  Ownership of a table is a different axis again, and `PartiallyDeclared` already answers it — the
+  right home for "do not touch what I did not declare", rather than the loss-based ladder.
+
+- **A changed foreign key is one `replace_foreign_key`**, carrying the drop and the add together,
+  where it used to be a separate `drop_foreign_key` and `add_foreign_key`. Emitted apart they could
+  be authorised apart, and a ceiling admitting only the drop would leave the column with no
+  constraint at all — the one outcome neither the old classification nor the new one wants.
+
+### Added
+
+- **`Plan::withStep(before:|after:, run:)` — change-attached data steps**, the half of the design
+  contract's §6 that was specified and never built. For a transform whose marker *is* the schema
+  delta: wrap a column's values before the `MODIFY` that would reject them, backfill a column right
+  after the `ADD` that created it. Run-once `dataStep()` remains the other half, for content changes
+  with no delta to attach to.
+
+  Steps run at their position in the apply order — placement being the whole point — inside the same
+  advisory lock, and are recorded in the run ledger. A failing step stops the run and is reported
+  against the change it was attached to, because that is what tells a reader where the database
+  now stands.
+
+  The selector is `"kind table.subject"` in the differ's own vocabulary, the same strings a plan
+  prints. `withStep()` returns a **new** plan, so `Plan` stays the pure value object it is
+  advertised as.
+
+- **`PlannedChange::KINDS`** — the kind vocabulary, published so a selector naming a kind that does
+  not exist is refused where it is written.
+
+### Two honesty corrections to the specification
+
+- **§6.1's "the pair applies as a unit" was not deliverable and has been withdrawn.** DDL
+  auto-commits on MySQL and MariaDB, so a step and its change cannot share a transaction there, and
+  no API in this package can change that. PostgreSQL and SQLite have transactional DDL and let a
+  caller wrap the whole apply. Documented as a per-engine property rather than promised flatly.
+
+- **Consequently the `NOT NULL`-without-default case stays `Manual`**, where §6.1 claimed attaching
+  a backfill would unlock it — the pair would have to be atomic for the column to be tightened
+  safely in one pass. The differ's guidance now names the path that actually works: add the column
+  nullable, backfill it with an `after:` step, tighten it in a later release once the data satisfies
+  the constraint.
+
 ## [0.6.1] - 2026-08-21
 
 ### Changed
@@ -432,7 +505,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Nandan108/attrecord-migrations/compare/v0.5.1...v0.5.2

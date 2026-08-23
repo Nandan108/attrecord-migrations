@@ -124,7 +124,9 @@ final class SchemaDiffer
                 continue;
             }
             if (!$col->nullable && null === $col->default && null === $col->defaultExpr && !$col->isGenerated) {
-                $changes[] = $this->manual($table, $colName, 'adding a NOT NULL column without a default: existing rows would have no value — add a default, make it nullable, or backfill via a companion step');
+                $changes[] = $this->manual($table, $colName, 'adding a NOT NULL column without a default: existing rows would have no value — give it a '
+                        .'default, make it nullable, or add it nullable now and tighten it in a later release once '
+                        .'a step (Plan::withStep) has backfilled it');
                 continue;
             }
             $changes[] = new PlannedChange(
@@ -263,8 +265,25 @@ final class SchemaDiffer
                     $changes[] = $this->manual($table, $name, 'foreign key differs but this engine cannot drop an FK in place (table rebuild — Manual in v0.1)');
                     continue;
                 }
-                $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Destructive, $drop, 'foreign key shape differs — recreate');
-                $changes[] = $this->fkAdd($table, $name, $fk, ChangeClass::Destructive);
+                $add = $this->emitter->addForeignKey($table, $fk);
+                if ([] === $add) {
+                    $changes[] = $this->manual($table, $name, 'foreign key differs but this engine cannot add an FK in place (table rebuild — Manual in v0.1)');
+                    continue;
+                }
+
+                // One change carrying both statements, not a drop *and* an add. Emitted separately
+                // they could be authorised separately, and a ceiling that admitted the drop alone
+                // would leave the table with no constraint at all — the net effect here is a
+                // constraint *replacement*, so that is what the plan says.
+                $changes[] = new PlannedChange(
+                    $table,
+                    'replace_foreign_key',
+                    $name,
+                    ChangeClass::Safe,
+                    [...$drop, ...$add],
+                    'foreign key shape differs — dropped and re-added',
+                    mayRejectExistingRows: true,
+                );
             }
         }
         if (!$partiallyDeclared) {
@@ -287,6 +306,12 @@ final class SchemaDiffer
             $changes[] = $this->fkRename($table, $oldName, $newName, $fk);
         }
 
+        // Safe, not Destructive: a constraint drop removes no data, and an undeclared foreign key
+        // contradicts the declared model rather than merely adding to it — it forbids writes the
+        // Records permit. Leaving one in place is drift that silently overrules the schema, and it
+        // does real damage: an `ON DELETE CASCADE` left behind by a column rename will happily
+        // delete rows nobody meant to reach. A table this library does not fully own is a question
+        // of *authority*, which `PartiallyDeclared` answers by skipping this loop entirely.
         foreach (array_keys($pendingDrops) as $name) {
             $name = (string) $name; // numeric-string array key -> int; see above
             $drop = $this->emitter->dropForeignKey($table, $name);
@@ -294,7 +319,7 @@ final class SchemaDiffer
                 $changes[] = $this->manual($table, $name, 'undeclared live foreign key; this engine cannot drop an FK in place');
                 continue;
             }
-            $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Destructive, $drop, 'foreign key exists live but is not declared');
+            $changes[] = new PlannedChange($table, 'drop_foreign_key', $name, ChangeClass::Safe, $drop, 'foreign key exists live but is not declared');
         }
 
         return [...$changes, ...$this->diffChecks($table, $desired, $live, $partiallyDeclared)];
@@ -367,7 +392,10 @@ final class SchemaDiffer
                 continue;
             }
 
-            $changes[] = new PlannedChange($table, 'drop_check', $name, ChangeClass::Destructive, $drop, 'CHECK constraint exists live but is not declared');
+            // Safe for the same reason an undeclared foreign key is: a constraint drop costs no
+            // data, and a rule the Records do not declare *contradicts* them — it forbids writes the
+            // model permits. An undeclared index, which forbids nothing, stays Destructive.
+            $changes[] = new PlannedChange($table, 'drop_check', $name, ChangeClass::Safe, $drop, 'CHECK constraint exists live but is not declared');
         }
 
         return $changes;
@@ -601,7 +629,7 @@ final class SchemaDiffer
         return 'NO ACTION' === strtoupper($action) ? 'RESTRICT' : strtoupper($action);
     }
 
-    private function fkAdd(string $table, string $name, ForeignKeyDefinition $fk, ChangeClass $class = ChangeClass::Safe): PlannedChange
+    private function fkAdd(string $table, string $name, ForeignKeyDefinition $fk): PlannedChange
     {
         $statements = $this->emitter->addForeignKey($table, $fk);
         if ([] === $statements) {
@@ -613,7 +641,7 @@ final class SchemaDiffer
             $table,
             'add_foreign_key',
             $name,
-            $class,
+            ChangeClass::Safe,
             $statements,
             'foreign key missing',
             mayRejectExistingRows: true,
@@ -711,7 +739,7 @@ final class SchemaDiffer
             $table,
             'rename_foreign_key',
             $to,
-            ChangeClass::Destructive,
+            ChangeClass::Safe,
             [...$add, ...$drop],
             sprintf('foreign key renamed from "%s" (same shape); no RENAME CONSTRAINT on this engine, so it is added then dropped', $from),
             mayRejectExistingRows: true,

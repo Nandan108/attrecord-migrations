@@ -469,12 +469,71 @@ final class SchemaDifferTest extends TestCase
         ]);
     }
 
-    public function testRenamedForeignKeyIsOneDestructiveChangeOnMysql(): void
+    public function testAChangedForeignKeyIsOneChangeCarryingBothStatements(): void
+    {
+        // A shape change is a *replacement*. Emitted as a separate drop and add, a ceiling could
+        // authorise the drop alone — and a failure between them would leave the column with no
+        // constraint at all, which is the one outcome neither the old model nor the new one wants.
+        $live = self::liveBase(fks: [
+            self::baseFkName() => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'CASCADE', 'RESTRICT'),
+        ]);
+
+        $changes = self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live);
+        $replace = self::only($changes, 'replace_foreign_key');
+
+        self::assertCount(1, $changes, 'not also a separate drop and add');
+        self::assertSame(ChangeClass::Safe, $replace->class);
+        self::assertTrue($replace->mayRejectExistingRows, 'the ADD half still validates every row');
+
+        // Drop first: re-adding under the old name requires the old constraint to be gone.
+        self::assertStringContainsString('DROP FOREIGN KEY', $replace->statements[0]);
+        self::assertStringContainsString('ADD CONSTRAINT', $replace->statements[1]);
+    }
+
+    public function testAnUndeclaredForeignKeyIsDroppedAtTheSafeCeiling(): void
+    {
+        // The case that motivated the reclassification: a column rename on MySQL carries the old
+        // constraint onto the new column, so the model no longer declares it. Left in place it
+        // silently overrules the schema — an ON DELETE CASCADE nobody declared will delete rows.
+        $live = self::liveBase(fks: [
+            self::baseFkName()  => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+            'fk_left_behind'    => new LiveForeignKey('fk_left_behind', ['ref_id'], 'diff_orders', ['id'], 'CASCADE', 'RESTRICT'),
+        ]);
+
+        $drop = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live), 'drop_foreign_key');
+
+        self::assertSame(ChangeClass::Safe, $drop->class);
+        self::assertSame('fk_left_behind', $drop->subject);
+    }
+
+    public function testAPartiallyDeclaredTableKeepsForeignKeysItDoesNotDeclare(): void
+    {
+        // Authority, not loss, is what protects a table this library does not own — and it is a
+        // separate axis from the classification above.
+        $live = self::liveBase(fks: [
+            self::baseFkName()  => new LiveForeignKey(self::baseFkName(), ['ref_id'], 'diff_ref', ['id'], 'SET NULL', 'RESTRICT'),
+            'fk_someone_elses'  => new LiveForeignKey('fk_someone_elses', ['ref_id'], 'diff_orders', ['id'], 'CASCADE', 'RESTRICT'),
+        ]);
+
+        $changes = self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), $live, partiallyDeclared: true);
+
+        self::assertSame([], array_values(array_filter(
+            $changes,
+            static fn (PlannedChange $c): bool => str_contains($c->kind, 'foreign_key'),
+        )));
+    }
+
+    public function testRenamedForeignKeyIsOneSafeChangeOnMysql(): void
     {
         $changes = self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveWithRenamedFk());
 
         $rename = self::only($changes, 'rename_foreign_key');
-        self::assertSame(ChangeClass::Destructive, $rename->class, 'ADD FOREIGN KEY validates every row under a lock — not Safe');
+        // Safe, and consistent with the plain `add_foreign_key` case, which has always been Safe
+        // with `mayRejectExistingRows`. This branch is that same ADD plus a DROP, and the DROP
+        // costs no data — so classifying the pair harder than its own riskiest half was the
+        // inconsistency, not the fix. The validation cost is real and is what the flag is for.
+        self::assertSame(ChangeClass::Safe, $rename->class);
+        self::assertTrue($rename->mayRejectExistingRows);
         self::assertCount(1, $changes, 'the pair must not also appear as a separate add and drop');
 
         // Add before drop: the column is never left unconstrained.
@@ -728,7 +787,7 @@ final class SchemaDifferTest extends TestCase
         )));
     }
 
-    public function testAnUndeclaredCheckIsDroppedDestructively(): void
+    public function testAnUndeclaredCheckIsDropped(): void
     {
         $changes = self::mysqlDiffer()->diffTable(
             TableSchema::fromClass(DiffCheckedRecord::class),
@@ -736,7 +795,9 @@ final class SchemaDifferTest extends TestCase
         );
         $drop = self::only($changes, 'drop_check');
 
-        self::assertSame(ChangeClass::Destructive, $drop->class);
+        // Safe for the same reason an undeclared foreign key is: the drop costs no data, and a
+        // rule the Records do not declare contradicts them rather than adding to them.
+        self::assertSame(ChangeClass::Safe, $drop->class);
         self::assertSame('chk_hand_written', $drop->subject);
         self::assertStringContainsString('DROP CONSTRAINT', $drop->statements[0]);
     }

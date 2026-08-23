@@ -15,10 +15,33 @@ namespace Nandan108\AttrecordMigrations\Plan;
  */
 final class PlannedChange
 {
+    /**
+     * Every kind the differ emits, and the vocabulary a {@see PlanStep} selector is written in.
+     *
+     * Listed rather than left implicit so a selector naming a kind that does not exist is refused
+     * when it is written, not silently unmatched when it matters.
+     */
+    public const KINDS = [
+        'create_table',
+        'add_column',
+        'modify_column',
+        'rename_column',
+        'drop_column',
+        'create_index',
+        'drop_index',
+        'add_foreign_key',
+        'drop_foreign_key',
+        'rename_foreign_key',
+        'replace_foreign_key',
+        'add_check',
+        'drop_check',
+        'manual',
+    ];
+
     /** @param list<string> $statements executable SQL, in order; [] for Manual changes */
     public function __construct(
         public readonly string $table,
-        /** Machine-readable kind: create_table, add_column, modify_column, rename_column, drop_column, create_index, drop_index, add_foreign_key, drop_foreign_key, add_check, drop_check, manual. */
+        /** Machine-readable kind — one of {@see PlannedChange::KINDS}. */
         public readonly string $kind,
         /** The column/index/constraint the change targets ('' for whole-table changes). */
         public readonly string $subject,

@@ -134,7 +134,7 @@ trait CheckConstraintCases
         self::assertFalse($migrator->plan([CheckedRecord::class])->isEmpty(), 'the constraint was not added');
     }
 
-    public function testAnUndeclaredCheckIsProposedForDroppingOnlyBeyondSafe(): void
+    public function testAnUndeclaredCheckIsDroppedAtTheSafeCeiling(): void
     {
         $migrator = $this->checkMigrator();
         $migrator->apply($migrator->plan([CheckedRecord::class]));
@@ -151,13 +151,11 @@ trait CheckConstraintCases
         }
 
         self::assertSame('drop_check', $change->kind);
-        self::assertSame(ChangeClass::Destructive, $change->class);
+        self::assertSame(ChangeClass::Safe, $change->class);
 
-        // Safe alone leaves it: dropping something the database already enforces is a decision.
+        // A rule the Records do not declare contradicts them, and removing it costs no data — so
+        // the default ceiling converges it, like an undeclared foreign key.
         $migrator->apply($plan);
-        self::assertFalse($migrator->plan([CheckedRecord::class])->isEmpty());
-
-        $migrator->apply($plan, ChangeClass::Destructive);
         self::assertTrue($migrator->plan([CheckedRecord::class])->isEmpty());
     }
 
