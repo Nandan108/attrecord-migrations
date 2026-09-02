@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-02
+
+### Changed
+
+- **Admits attrecord `^0.20` alongside `^0.19`** (`^0.19 || ^0.20`). 0.20.0 adds the `Immutable`
+  marker and makes `AppendOnly` extend it — Record-layer semantics this package neither reads nor
+  needs, so it works unchanged against either.
+
+  A **union** rather than a bump, because that is what is true: nothing here requires 0.20, so a
+  consumer still on 0.19 has no reason to be dragged over. It matters that the two carets are
+  **disjoint** — `^0.19` and `^0.20` cannot both be satisfied — so a package pinned to the older one
+  inside a graph where anything else has moved makes the whole graph unresolvable. Local development
+  hides this (path repositories resolve regardless); CI, which fresh-resolves rather than reading the
+  lock, is where it surfaces.
+
 ## [0.8.0] - 2026-08-23
 
 **Index renames, and three answers the differ could not work out for itself.** Requires attrecord
@@ -561,7 +576,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.0...v0.6.1
