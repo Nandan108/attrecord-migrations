@@ -183,6 +183,16 @@ final class MysqlIntrospector implements SchemaIntrospector
      * Run a catalogue query, or null when this engine does not have that view/column. Catalogue
      * probing is the one place where an error is an *answer* rather than a failure.
      *
+     * **What it looks like when this swallows something it should not.** The cause is discarded, so
+     * a genuine failure here — a permissions problem on `information_schema`, a query broken by a
+     * refactor — is indistinguishable from "this engine has no such view", and the introspector
+     * reports that the table carries no CHECK constraints. The differ then plans to *add* every
+     * declared one, and the golden invariant fails: a freshly created table stops re-planning empty.
+     *
+     * So the escape is caught, but the message names a symptom rather than a cause. If you are here
+     * because a `create_table` is followed by `add_check` for constraints that plainly exist, this
+     * method returning null is the first thing to rule out — run the probe query by hand.
+     *
      * @param list<scalar> $params
      *
      * @return list<array<string, mixed>>|null
