@@ -191,7 +191,13 @@ final class MysqlIntrospector implements SchemaIntrospector
      *
      * So the escape is caught, but the message names a symptom rather than a cause. If you are here
      * because a `create_table` is followed by `add_check` for constraints that plainly exist, this
-     * method returning null is the first thing to rule out — run the probe query by hand.
+     * method returning null is the first thing to rule out.
+     *
+     * Rule it out by running **both** probe shapes by hand, not one: {@see checks()} tries the
+     * MariaDB-shaped query and falls back to the MySQL-shaped one, so an empty result means both
+     * failed and two causes were discarded to produce a single null. Depth is not the problem here —
+     * nothing catches above this, so a wrong answer still reaches the golden invariant — but breadth
+     * is: a fallback chain collapses several reasons into one absence.
      *
      * @param list<scalar> $params
      *
