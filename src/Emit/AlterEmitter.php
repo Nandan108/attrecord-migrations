@@ -34,7 +34,7 @@ interface AlterEmitter
     public function modifyColumn(string $table, ColumnDefinition $col, ColumnTuple $desired, array $facets): ?array;
 
     /**
-     * Rename a column, rebuilding any generated column whose expression depends on it.
+     * Rename a column, re-specifying any generated column whose expression depends on it.
      *
      * **MySQL refuses to rename a column another column's `GENERATED ALWAYS` expression mentions**
      * — `ERROR 3108, Column 'x' has a generated column dependency` — and the `ALTER` does not run at
@@ -42,15 +42,34 @@ interface AlterEmitter
      * itself, so this is invisible on a MariaDB dev machine and fatal on a MySQL install.
      *
      * `$dependents` carries the **desired** definitions of the generated columns that name the old
-     * column, so an emitter that needs to can drop each, rename, and add each back from a definition
-     * whose expression already names the new column. Engines that rewrite references themselves
-     * (PostgreSQL, SQLite) ignore the parameter.
+     * column, so an emitter that needs to can re-point each at the new name in the same statement as
+     * the rename. Engines that rewrite references themselves (PostgreSQL, SQLite) ignore the
+     * parameter.
+     *
+     * **Re-specifying is not dropping and re-adding**, and the difference is not a matter of taste:
+     * dropping a generated column takes its indexes with it — an index over it alone disappears
+     * outright, a composite index silently loses that column and keeps the rest — and adding the
+     * column back restores none of them. There is no error and no wrong answer, only queries that
+     * quietly stop using an index. `MODIFY COLUMN` never removes the column, so the indexes are
+     * never in question.
      *
      * @param list<ColumnDefinition> $dependents generated columns referencing `$oldName`, desired shape
      *
      * @return list<string>
      */
     public function renameColumn(string $table, string $oldName, ColumnDefinition $col, array $dependents = []): array;
+
+    /**
+     * Whether {@see renameColumn()} re-specifies the dependents it is given, rather than ignoring
+     * them.
+     *
+     * True only on the MySQL family, which needs it (error 3108 above). It is what lets the differ
+     * price a rename per engine instead of globally: re-specifying a **`STORED`** dependent
+     * recomputes it for every row, which is the table rewrite `Assisted` exists to hold back — while
+     * on PostgreSQL and SQLite the very same rename is a catalogue update and stays `Safe`. A
+     * `VIRTUAL` dependent stores nothing and costs nothing to re-point, so it never escalates.
+     */
+    public function renameRespecifiesDependents(): bool;
 
     /** @return list<string> */
     public function dropColumn(string $table, string $column): array;

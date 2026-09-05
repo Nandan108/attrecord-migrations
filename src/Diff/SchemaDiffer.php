@@ -96,18 +96,18 @@ final class SchemaDiffer
         }
 
         // --- Columns. ---
-        // A generated column rebuilt as part of a declared rename must not also be diffed on its
-        // own: the rebuild re-adds it from the desired definition, so any drift in it is already
-        // resolved. Computed up front because the dependent may be declared either side of the
-        // column being renamed.
-        $rebuiltByRename = self::columnsRebuiltByRename($desired, $live);
+        // A generated column re-specified as part of a declared rename must not also be diffed on
+        // its own: the rename statement already re-states it from the desired definition, so any
+        // drift in it is resolved there. Computed up front because the dependent may be declared
+        // either side of the column being renamed.
+        $respecifiedByRename = self::columnsRespecifiedByRename($desired, $live);
 
         $liveColumnsClaimed = [];
         foreach ($desired->columns as $colName => $col) {
             if (isset($live->columns[$colName])) {
                 $liveColumnsClaimed[$colName] = true;
-                if (isset($rebuiltByRename[$colName])) {
-                    continue; // re-added from this same definition by the rename below
+                if (isset($respecifiedByRename[$colName])) {
+                    continue; // resolved by the rename below; see columnsRespecifiedByRename()
                 }
                 foreach ($this->diffColumn($table, $col, $live) as $change) {
                     $changes[] = $change;
@@ -123,41 +123,43 @@ final class SchemaDiffer
                 // MySQL refuses to rename a column that a generated column's expression names
                 // (error 3108) — MariaDB accepts it and rewrites the expression itself, so this is
                 // invisible on a MariaDB dev machine and fatal on a MySQL install. The dependents
-                // travel to the emitter, which rebuilds them around the rename where it must.
+                // travel to the emitter, which re-points them in the same statement where it must.
                 $dependents = self::generatedDependents($desired, $live, $from);
+                $respecified = [] !== $dependents && $this->emitter->renameRespecifiesDependents();
+                // Only a STORED dependent costs anything: re-pointing its expression recomputes the
+                // column for every row. A VIRTUAL one stores nothing, and an engine that ignores the
+                // dependents entirely pays for none of them, which is why the question is asked of
+                // the emitter rather than answered globally.
                 $stored = array_values(array_filter(
                     $dependents,
                     static fn (ColumnDefinition $d): bool => GeneratedColumnMode::Stored === ($d->generatedMode ?? GeneratedColumnMode::Stored),
                 ));
-                if ([] !== $stored) {
-                    // Rebuilding a STORED dependent rewrites every row, and on MariaDB it would buy
-                    // nothing at all — so this is handed to a person rather than done quietly.
-                    $changes[] = $this->manual($table, $colName, sprintf(
-                        'declared rename from "%s", but the STORED generated column %s depends on it. '
-                        .'MySQL refuses the rename outright (error 3108) and rebuilding a stored column '
-                        .'rewrites every row, so do it deliberately: drop %s, rename the column, then '
-                        .'re-add it. MariaDB would accept the plain rename and fix the expression itself.',
-                        $from,
-                        implode(', ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'"', $stored)),
-                        implode(' and ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'"', $stored)),
-                    ));
-                    continue;
-                }
+                $rewrites = $respecified && [] !== $stored;
 
                 $changes[] = new PlannedChange(
                     $table,
                     'rename_column',
                     $colName,
-                    ChangeClass::Safe,
+                    // The statement is known and correct either way; a full-table recompute is just
+                    // not something to run unattended on the next page load.
+                    $rewrites ? ChangeClass::Assisted : ChangeClass::Safe,
                     $this->emitter->renameColumn($table, $from, $col, $dependents),
-                    [] === $dependents
+                    !$respecified
                         ? "declared rename from '{$from}' (data-preserving)"
                         : sprintf(
-                            "declared rename from '%s' (data-preserving); the virtual generated column%s %s "
-                            .'is rebuilt around it, which MySQL requires and MariaDB does not',
+                            "declared rename from '%s' (data-preserving); the generated column%s %s %s "
+                            .'re-pointed at the new name in the same statement, which MySQL requires '
+                            .'(error 3108) and MariaDB does not%s',
                             $from,
                             1 === \count($dependents) ? '' : 's',
                             implode(', ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'"', $dependents)),
+                            1 === \count($dependents) ? 'is' : 'are',
+                            $rewrites
+                                ? sprintf(
+                                    '. %s STORED, so the rename recomputes it for every row',
+                                    implode(' and ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'" is', $stored)),
+                                )
+                                : '',
                         ),
                 );
                 // MySQL's CHANGE COLUMN re-specifies the whole column in the same statement; on
@@ -938,12 +940,18 @@ final class SchemaDiffer
     }
 
     /**
-     * Which live columns a declared rename is going to rebuild, so the main column loop can leave
-     * them alone — the rebuild re-adds each from the same desired definition it would diff against.
+     * Which live columns a declared rename resolves on its way past, so the main column loop can
+     * leave them alone.
+     *
+     * Every engine resolves them, by one of two routes: MySQL because the emitter re-states each
+     * dependent from its desired definition in the rename statement, PostgreSQL and SQLite because
+     * they rewrite the stored expression themselves. Either way the live expression names the old
+     * column right up until the rename runs, so diffing one here would read that as drift and plan a
+     * `modify_column` that undoes nothing and duplicates everything.
      *
      * @return array<string, true>
      */
-    private static function columnsRebuiltByRename(TableSchema $desired, LiveTable $live): array
+    private static function columnsRespecifiedByRename(TableSchema $desired, LiveTable $live): array
     {
         $rebuilt = [];
         foreach ($desired->columns as $colName => $col) {

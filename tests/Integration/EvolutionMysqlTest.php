@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Tests\Integration;
 
+use Nandan108\Attrecord\Record;
 use Nandan108\AttrecordMigrations\Introspect\MysqlIntrospector;
 use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
+use Nandan108\AttrecordMigrations\SchemaMigrator;
+use Nandan108\AttrecordMigrations\Tests\Fixtures\GeneratedRenameRecord;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CheckConstraintCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CompositePkCases;
 use Nandan108\AttrecordMigrations\Tests\Integration\Cases\CyclicSchemaCases;
@@ -120,5 +123,57 @@ final class EvolutionMysqlTest extends MysqlIntegrationTestCase
     protected function dropAndNarrowPrimaryKeySql(string $quotedTable, string $quotedFirstColumn): array
     {
         return ["ALTER TABLE {$quotedTable} DROP PRIMARY KEY, ADD PRIMARY KEY ({$quotedFirstColumn})"];
+    }
+
+    /**
+     * MySQL-only, because MySQL is the only engine that refuses the plain rename (error 3108) and so
+     * the only one whose emitter touches the dependent at all. PostgreSQL and SQLite rewrite the
+     * expression themselves, and `EvolutionCases::rename_column` already covers the ordinary rename
+     * on all three.
+     *
+     * The dependent here is **indexed**, which is what makes this a regression test rather than a
+     * demonstration: an unindexed one converges under either implementation.
+     */
+    public function testRenamingAColumnAGeneratedColumnDependsOnKeepsItsIndex(): void
+    {
+        static::$pdo->exec(
+            'CREATE TABLE `mig_gen_rename` ('
+            .'`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, '
+            ."`value` VARCHAR(64) NOT NULL DEFAULT '', "
+            .'`value_uint` BIGINT UNSIGNED GENERATED ALWAYS AS (CAST(`value` AS UNSIGNED)) VIRTUAL, '
+            .'PRIMARY KEY (`id`), KEY `idx_value_uint` (`value_uint`)'
+            .') ENGINE=InnoDB',
+        );
+        // Not all-zero, so a check on the recomputed values can actually fail.
+        static::$pdo->exec("INSERT INTO `mig_gen_rename` (`value`) VALUES ('10'), ('0'), ('7')");
+
+        $migrator = new SchemaMigrator(Record::connection());
+        $plan = $migrator->plan([GeneratedRenameRecord::class]);
+
+        self::assertSame(['rename_column'], array_map(static fn ($c): string => $c->kind, $plan->changes));
+        self::assertSame(ChangeClass::Safe, $plan->changes[0]->class, 'a VIRTUAL dependent stores nothing, so nothing is rewritten');
+        self::assertCount(1, $plan->changes[0]->statements, 'one ALTER: re-point the dependent, then rename');
+        self::assertStringNotContainsString('DROP COLUMN', $plan->changes[0]->statements[0], 'dropping the dependent would take its index with it');
+
+        $migrator->apply($plan);
+
+        self::assertSame(
+            [['10', 10], ['0', 0], ['7', 7]],
+            static::$pdo->query('SELECT `ident_value`, `value_uint` FROM `mig_gen_rename` ORDER BY `id`')->fetchAll(\PDO::FETCH_NUM),
+            'data intact, and the generated column recomputing from the new name',
+        );
+        self::assertSame(
+            ['value_uint'],
+            static::$pdo->query(
+                'SELECT COLUMN_NAME FROM information_schema.STATISTICS '
+                ."WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mig_gen_rename' AND INDEX_NAME = 'idx_value_uint' "
+                .'ORDER BY SEQ_IN_INDEX',
+            )->fetchAll(\PDO::FETCH_COLUMN),
+            'the index over the dependent survived the rename',
+        );
+
+        // The golden invariant, and the assertion that would have caught this on its own: a lost
+        // index reads back as a missing declared index and re-plans as a create.
+        self::assertTrue($migrator->plan([GeneratedRenameRecord::class])->isEmpty());
     }
 }

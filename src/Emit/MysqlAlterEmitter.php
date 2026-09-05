@@ -37,31 +37,33 @@ final class MysqlAlterEmitter implements AlterEmitter
     #[\Override]
     public function renameColumn(string $table, string $oldName, ColumnDefinition $col, array $dependents = []): array
     {
-        $rename = 'ALTER TABLE '.$this->q($table).' CHANGE COLUMN '.$this->q($oldName).' '.$this->dialect->buildColumnLine($col);
-        if ([] === $dependents) {
-            return [$rename];
-        }
-
-        // MySQL refuses the CHANGE COLUMN outright while a generated column's expression names the
-        // old column (error 3108), so each dependent comes out first and goes back afterwards from
-        // its *desired* definition, whose expression already names the new column.
+        // MySQL refuses a bare CHANGE COLUMN while a generated column's expression names the old
+        // column (error 3108). One ALTER carrying both the re-pointed dependents and the rename is
+        // accepted, and leaves every index over those dependents untouched — which dropping and
+        // re-adding them would not: an index over a dependent alone would vanish and a composite one
+        // would silently lose that column, with no error either way.
         //
-        // MariaDB does not need any of this — it accepts the rename and rewrites the stored
-        // expression itself — but one emitter serves both families and cannot tell them apart at SQL
-        // build time. The differ therefore only sends dependents it is cheap to rebuild: a VIRTUAL
-        // generated column stores nothing, so dropping and re-adding it is a catalogue edit on both
-        // engines. A STORED one would be a full-table rewrite, and MariaDB would be paying it for
-        // nothing, which is why that case never reaches here.
-        $statements = [];
+        // **The clause order is load-bearing.** MODIFY before CHANGE succeeds; CHANGE before MODIFY
+        // fails with `ERROR 1054, Unknown column 'old'`, the engine having validated the still-old
+        // expression against the already-renamed column. Verified on MySQL 8.0.46 and MariaDB 10.11.
+        //
+        // MariaDB needs none of this — it accepts the bare rename and rewrites the expression itself
+        // — but one emitter serves both families and cannot tell them apart at SQL-build time. It
+        // accepts the compound form with the same result, so both are correct and only MySQL needs
+        // it to be written this way.
+        $clauses = [];
         foreach ($dependents as $dependent) {
-            $statements[] = 'ALTER TABLE '.$this->q($table).' DROP COLUMN '.$this->q($dependent->name);
+            $clauses[] = 'MODIFY COLUMN '.$this->dialect->buildColumnLine($dependent);
         }
-        $statements[] = $rename;
-        foreach ($dependents as $dependent) {
-            $statements[] = 'ALTER TABLE '.$this->q($table).' ADD COLUMN '.$this->dialect->buildColumnLine($dependent);
-        }
+        $clauses[] = 'CHANGE COLUMN '.$this->q($oldName).' '.$this->dialect->buildColumnLine($col);
 
-        return $statements;
+        return ['ALTER TABLE '.$this->q($table).' '.implode(', ', $clauses)];
+    }
+
+    #[\Override]
+    public function renameRespecifiesDependents(): bool
+    {
+        return true;
     }
 
     #[\Override]

@@ -277,7 +277,7 @@ final class SchemaDifferTest extends TestCase
         ], ['id'], [], []);
     }
 
-    public function testARenameRebuildsAVirtualGeneratedColumnThatDependsOnIt(): void
+    public function testARenameRepointsAVirtualGeneratedColumnThatDependsOnIt(): void
     {
         // MySQL refuses CHANGE COLUMN while a generated column names the old column (error 3108).
         // MariaDB accepts it and rewrites the expression itself, so a MariaDB-only check sees
@@ -289,39 +289,70 @@ final class SchemaDifferTest extends TestCase
 
         $rename = self::only($changes, 'rename_column');
         self::assertSame(ChangeClass::Safe, $rename->class);
-        self::assertCount(3, $rename->statements, 'drop dependent, rename, re-add dependent');
-        self::assertStringContainsString('DROP COLUMN `qty_open`', $rename->statements[0]);
-        self::assertStringContainsString('CHANGE COLUMN `requested_qty` `qty_requested`', $rename->statements[1]);
-        self::assertStringContainsString('ADD COLUMN `qty_open`', $rename->statements[2]);
-        self::assertStringContainsString('qty_requested', $rename->statements[2], 're-added naming the NEW column');
+        self::assertCount(1, $rename->statements, 'one ALTER, both clauses');
 
-        // The rebuilt column must not also be diffed on its own — it is put back from the very
-        // definition the diff would have compared against.
+        // The dependent is re-specified, never dropped: dropping it would take any index over it
+        // away — outright if the index covered it alone, silently narrowed if it was composite —
+        // and adding the column back restores none of them.
+        self::assertStringNotContainsString('DROP COLUMN', $rename->statements[0]);
+        self::assertStringContainsString('MODIFY COLUMN `qty_open`', $rename->statements[0]);
+        self::assertStringContainsString('CHANGE COLUMN `requested_qty` `qty_requested`', $rename->statements[0]);
+
+        // Clause order is load-bearing, not cosmetic: CHANGE before MODIFY fails on MySQL with
+        // `ERROR 1054, Unknown column 'requested_qty'`, the engine having validated the still-old
+        // expression against the already-renamed column.
+        self::assertLessThan(
+            strpos($rename->statements[0], 'CHANGE COLUMN'),
+            strpos($rename->statements[0], 'MODIFY COLUMN'),
+            'MODIFY must precede CHANGE',
+        );
+
+        // The re-specified column must not also be diffed on its own — the rename statement already
+        // states it from the very definition the diff would have compared against.
         self::assertSame([], array_filter(
             $changes,
             static fn (PlannedChange $c): bool => 'qty_open' === $c->subject && 'rename_column' !== $c->kind,
         ));
     }
 
-    public function testAStoredDependentIsHandedToAPersonRatherThanRebuilt(): void
+    public function testAStoredDependentMakesTheRenameAssisted(): void
     {
-        // Rebuilding a STORED column rewrites every row, and MariaDB would pay that for nothing
-        // since it needs no rebuild at all. Too consequential to do quietly.
+        // The statement is known and correct — so not Manual — but re-pointing a STORED expression
+        // recomputes the column for every row, which is not something to run unattended.
         $changes = self::mysqlDiffer()->diffTable(
             TableSchema::fromClass(DiffStoredDependentRecord::class),
             self::liveWithGeneratedDependent(),
         );
 
-        $manual = self::only($changes, 'manual');
-        self::assertSame([], $manual->statements, 'Manual carries no SQL');
-        self::assertStringContainsString('STORED generated column "qty_open"', $manual->reason);
-        self::assertStringContainsString('3108', $manual->reason);
-        self::assertSame([], array_filter($changes, static fn (PlannedChange $c): bool => 'rename_column' === $c->kind));
+        $rename = self::only($changes, 'rename_column');
+        self::assertSame(ChangeClass::Assisted, $rename->class);
+        self::assertCount(1, $rename->statements);
+        self::assertStringContainsString('MODIFY COLUMN `qty_open`', $rename->statements[0]);
+        self::assertStringContainsString('every row', $rename->reason);
+        self::assertSame([], array_filter($changes, static fn (PlannedChange $c): bool => 'manual' === $c->kind));
     }
 
-    public function testARenameWithNoGeneratedDependentStaysASingleStatement(): void
+    public function testTheSameStoredDependentStaysSafeOnAnEngineThatIgnoresIt(): void
     {
-        // The contrast: the rebuild is paid only where the engine forces it.
+        // The cost is MySQL's, not the change's: PostgreSQL rewrites the reference itself, so there
+        // is no recompute to hold back and the rename is an ordinary catalogue update. Classifying
+        // this globally would block a PG rename behind a ceiling for a MySQL reason.
+        $dialect = new PgsqlDialect();
+        $differ = new SchemaDiffer(new PgsqlColumnNormalizer(), new PgsqlAlterEmitter($dialect), $dialect);
+
+        $rename = self::only($differ->diffTable(
+            TableSchema::fromClass(DiffStoredDependentRecord::class),
+            self::liveWithGeneratedDependent(),
+        ), 'rename_column');
+
+        self::assertSame(ChangeClass::Safe, $rename->class);
+        self::assertCount(1, $rename->statements);
+        self::assertStringNotContainsString('qty_open', $rename->statements[0], 'the dependent is not mentioned at all');
+    }
+
+    public function testARenameWithNoGeneratedDependentMentionsNoDependent(): void
+    {
+        // The contrast: the extra clause is paid only where there is something to re-point.
         $live = new LiveTable('diff_t', [
             'id'       => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
             'sku_code' => new LiveColumn('sku_code', 'varchar(64)', false, 'NULL', false),
@@ -329,6 +360,7 @@ final class SchemaDifferTest extends TestCase
 
         $rename = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffRenameRecord::class), $live), 'rename_column');
         self::assertCount(1, $rename->statements);
+        self::assertStringNotContainsString('MODIFY COLUMN', $rename->statements[0]);
     }
 
     public function testDeclaredRenameIsSafeAndDataPreserving(): void

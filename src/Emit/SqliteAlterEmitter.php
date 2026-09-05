@@ -46,8 +46,14 @@ final class SqliteAlterEmitter implements AlterEmitter
     public function renameColumn(string $table, string $oldName, ColumnDefinition $col, array $dependents = []): array
     {
         // SQLite rewrites references inside a generated column's expression on RENAME COLUMN, so
-        // the dependents need no rebuild here.
+        // the dependents are ignored here, and nothing about them makes the rename cost more.
         return ['ALTER TABLE '.$this->q($table).' RENAME COLUMN '.$this->q($oldName).' TO '.$this->q($col->name)];
+    }
+
+    #[\Override]
+    public function renameRespecifiesDependents(): bool
+    {
+        return false;
     }
 
     #[\Override]

@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-05
+
+**One bug, released as a minor.** The whole of this release is a bug fix, but fixing it required
+widening a published seam: `AlterEmitter` gains a parameter on `renameColumn()` and one new method.
+An optional parameter is source-compatible for *callers* and breaking for *implementers* — a class
+implementing the old signature no longer matches and PHP fatals on load — and every previous change
+of that kind here was a minor (`addCheck()` / `dropCheck()` in 0.6.0, `renameIndex()` in 0.8.0,
+`renameForeignKey()` in 0.5.0). The seam sets the version, not the intent.
+
+The three in-package emitters are the only implementations known to exist, so for a consumer that
+does not implement `AlterEmitter` this is a drop-in upgrade.
+
+Requires attrecord `^0.21`.
+
 ### Fixed
 
 - **A declared column rename no longer emits DDL MySQL refuses.** `#[Column(renamedFrom: 'old')]`
@@ -20,19 +34,69 @@ All notable changes to this project are documented here. The format is based on
 
   The differ now finds the generated columns whose **live** expression names the column being
   renamed — the live one, because the desired expression already names the new column and so says
-  nothing about what the rename will collide with — and hands them to the emitter, which drops each,
-  renames, and re-adds each from its desired definition. Only MySQL pays: PostgreSQL and SQLite
-  rewrite references themselves and ignore the parameter, and MariaDB does not need it either,
-  though one emitter serves both MySQL-family engines and cannot tell them apart at SQL-build time.
+  nothing about what the rename will collide with — and hands them to the emitter. MySQL emits **one
+  `ALTER`** that re-points each dependent at the new name and renames the column, in that order.
+  PostgreSQL and SQLite rewrite references themselves and ignore the parameter; MariaDB does not need
+  it either, but one emitter serves both MySQL-family engines and cannot tell them apart at
+  SQL-build time, and MariaDB accepts the compound form with the same result.
 
-  **A `STORED` dependent is refused rather than rebuilt.** Dropping and re-adding a `VIRTUAL`
-  generated column is a catalogue edit, cheap enough to do on both engines; a `STORED` one rewrites
-  every row, and MariaDB would be paying that for nothing. That case becomes a `Manual` change
-  naming the column and the three steps to take.
+  **The clause order is load-bearing.** `MODIFY` before `CHANGE` succeeds on both engines; `CHANGE`
+  before `MODIFY` fails with `ERROR 1054, Unknown column 'old'`, the engine having validated the
+  still-old expression against the already-renamed column.
 
-  Verified against a real `mysql:8.0.46` container both ways: the old single statement reproduces
-  3108, and the emitted sequence renames with data intact and the generated column recomputing from
-  the new name.
+  The trigger is checkable from the declarations alone, without a database: a
+  `#[Column(renamedFrom: 'x')]` where `x` appears in some other column's `generatedAs`.
+
+  Verified against a real `mysql:8.0.46` container and MariaDB 10.11: the bare `CHANGE COLUMN`
+  reproduces 3108, and the emitted statement renames with data intact, the generated column
+  recomputing from the new name, and every index still in place.
+
+- **Re-specifying the dependent rather than rebuilding it keeps its indexes.** Dropping a generated
+  column takes its indexes with it — an index over it alone disappears outright, a composite index
+  silently loses that column and keeps the rest — and adding the column back restores none of them.
+  There is no error and no wrong answer, only queries that quietly stop using an index, which is the
+  same failure shape as 3108 being silent on MariaDB. `MODIFY COLUMN` never removes the column, so
+  the question does not arise.
+
+  The regression test uses an **indexed** dependent for that reason: an unindexed one converges
+  either way and so cannot tell the two implementations apart. Caught in review by a consumer lane
+  that went looking for a table its own could not test against
+  (`invflux_subject_identifiers`, where the generated column exists for its index and nothing else
+  reads it) — thank you.
+
+### Changed
+
+- **`AlterEmitter::renameColumn()` takes `array $dependents = []`** — the generated columns, as
+  *desired* `ColumnDefinition`s, whose live expression names the column being renamed. An
+  implementation that ignores it is correct on PostgreSQL and SQLite, which rewrite the references
+  themselves; the two in-package emitters for those engines document why they discard it rather than
+  leaving the reader to infer it.
+
+- **`AlterEmitter::renameRespecifiesDependents(): bool`** is new, and is what lets a rename be priced
+  per engine instead of globally. A rename whose dependent is **`STORED`** now classifies as
+  `Assisted` on the MySQL family — the statement is known and correct, but re-pointing a stored
+  expression recomputes the column for every row, which is exactly the "known SQL, too consequential
+  to run unattended" case `Assisted` was introduced for. On PostgreSQL and SQLite the very same
+  rename stays `Safe`: nothing is re-specified there, so there is nothing to hold back. A `VIRTUAL`
+  dependent stores nothing and never escalates.
+
+- **Requires attrecord `^0.21`** (was `^0.19 || ^0.20`). Not for this fix — 0.21.0 carries
+  `deleteUnreferenced()`, which nothing here calls. The floor moves because `^0.20` and `^0.21` are
+  disjoint under the caret, so a graph where anything has moved to 0.21 cannot also hold a package
+  pinned below it. Consumers on 0.19/0.20 stay on 0.8.1 until they are ready to move.
+
+### Documentation
+
+- **`MysqlIntrospector::tryFetch()` names the failure it can hide.** Discarding the cause is right
+  there — a failed catalogue probe genuinely is the answer "this engine has no such view", since
+  `information_schema.CHECK_CONSTRAINTS` carries `TABLE_NAME` on MariaDB and not on MySQL. What was
+  missing is that a *real* failure is indistinguishable from that answer, and lands two steps from
+  its cause: the introspector reports no live CHECK constraints, the differ plans to add every
+  declared one, and the golden invariant fails — a freshly created table stops re-planning empty.
+
+  The note also says the probe is a **fallback chain**, not a single query: `checks()` tries the
+  MariaDB shape and falls back to the MySQL shape, so an empty result means both failed and two
+  causes were collapsed into one null. Running only one of them by hand proves nothing.
 
 ## [0.8.1] - 2026-09-02
 
@@ -604,7 +668,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.6.1...v0.7.0

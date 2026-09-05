@@ -74,8 +74,14 @@ final class PgsqlAlterEmitter implements AlterEmitter
     public function renameColumn(string $table, string $oldName, ColumnDefinition $col, array $dependents = []): array
     {
         // PostgreSQL stores a generated expression parsed, so a rename updates every reference to
-        // it; the dependents need no rebuild here.
+        // it; the dependents are ignored here, and nothing about them makes the rename cost more.
         return ['ALTER TABLE '.$this->q($table).' RENAME COLUMN '.$this->q($oldName).' TO '.$this->q($col->name)];
+    }
+
+    #[\Override]
+    public function renameRespecifiesDependents(): bool
+    {
+        return false;
     }
 
     #[\Override]
