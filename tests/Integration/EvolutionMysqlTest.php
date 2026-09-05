@@ -172,8 +172,10 @@ final class EvolutionMysqlTest extends MysqlIntegrationTestCase
             'the index over the dependent survived the rename',
         );
 
-        // The golden invariant, and the assertion that would have caught this on its own: a lost
-        // index reads back as a missing declared index and re-plans as a create.
+        // The golden invariant, and the check that carries the weight here: a lost index reads back
+        // as a missing declared index and re-plans as a create, so this catches losses nobody
+        // enumerated. The assertion above names one index because that is the one this fixture has;
+        // an enumerated list is bounded by what its author thought of, and this is not.
         self::assertTrue($migrator->plan([GeneratedRenameRecord::class])->isEmpty());
     }
 }
