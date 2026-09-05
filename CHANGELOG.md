@@ -64,6 +64,27 @@ Requires attrecord `^0.21`.
   (`invflux_subject_identifiers`, where the generated column exists for its index and nothing else
   reads it) — thank you.
 
+- **An enum whose members are not lower case now converges.** MySQL introspection lower-cased the
+  whole of `COLUMN_TYPE`, which is right for the type keyword and wrong for `enum(…)` / `set(…)`,
+  where the parenthesised part is not syntax but the member values themselves. A column declared
+  `enumValues: ['EXW', 'FCA', 'DDP']` therefore read back as `['exw', 'fca', 'ddp']` and was
+  **permanently drifted on `members`**: the differ planned a `MODIFY COLUMN` byte-identical to what
+  was already live, applying it changed nothing, and the next plan said exactly the same. Nothing
+  errored and nothing converged — a standing `Destructive` entry that teaches a reader to stop
+  reading drift reports.
+
+  Folding now skips quoted literals. Folding only up to the first `(` would not have worked: on the
+  integer families `unsigned` and `zerofill` follow the closing paren and the patterns that read
+  them are case-sensitive.
+
+  MySQL-family only — PostgreSQL and SQLite carry an enum's members in a CHECK constraint, on a
+  separate field that was never folded.
+
+  The kitchen-sink fixture gained a **deliberately upper-case** enum, since a lower-case one
+  converges whether or not the case survives the round trip. With the fold restored, 21 tests fail;
+  before it was added, none did. Reported by a consumer lane that hit it on a real column — a
+  purchase order's Incoterm, upper case because the ICC's own spelling is.
+
 ### Changed
 
 - **`AlterEmitter::renameColumn()` takes `array $dependents = []`** — the generated columns, as

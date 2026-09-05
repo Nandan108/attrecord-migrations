@@ -50,6 +50,20 @@ final class KitchenSinkRecord extends Record
     #[Column(ColumnType::Enum, enumValues: ['draft', 'live', 'gone'], default: 'draft')]
     public string $status = 'draft';
 
+    /**
+     * **The members are upper case on purpose — do not "tidy" them.** An enum whose members are
+     * already lower case converges whether or not the pipeline preserves their case, so a
+     * lower-case-only fixture cannot see a member list being folded on the way in. This one can:
+     * fold it and the column reads as permanently drifted on `members`, planning a `MODIFY` that is
+     * byte-identical to what is live.
+     *
+     * Modelled on a real consumer column (a PO's Incoterm), which is upper case because the ICC's
+     * own spelling is — the case where changing the enum to suit the tooling is the tail wagging
+     * the dog.
+     */
+    #[Column(ColumnType::Enum, enumValues: ['EXW', 'FCA', 'DDP'], default: 'EXW')]
+    public string $incoterm = 'EXW';
+
     #[Column(ColumnType::Bool, default: false)]
     public bool $active = false;
 

@@ -45,7 +45,7 @@ final class MysqlIntrospector implements SchemaIntrospector
             }
             $columns[$name] = new LiveColumn(
                 name: $name,
-                rawType: strtolower((string) $row['COLUMN_TYPE']),
+                rawType: self::foldTypeKeywords((string) $row['COLUMN_TYPE']),
                 nullable: 'YES' === strtoupper((string) $row['IS_NULLABLE']),
                 rawDefault: isset($row['COLUMN_DEFAULT']) ? (string) $row['COLUMN_DEFAULT'] : null,
                 autoIncrement: str_contains($extra, 'auto_increment'),
@@ -210,5 +210,40 @@ final class MysqlIntrospector implements SchemaIntrospector
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * Fold a live `COLUMN_TYPE` to lower case for matching — **except inside quoted literals**.
+     *
+     * The type keyword is syntax, and the normalizer's family patterns are written lower-case, so
+     * folding it is what lets `INT(11) UNSIGNED` and `int(11) unsigned` compare equal. Inside
+     * `enum(…)` / `set(…)` the parenthesised part is not syntax: it is the member values
+     * themselves, and folding those is lossy.
+     *
+     * The damage is quiet and permanent. A column whose members are not already lower case reads as
+     * drifted on `members` forever: the differ compares live `'exw'` against desired `'EXW'`, plans
+     * a `MODIFY COLUMN` byte-identical to what is already there, applying it changes nothing, and
+     * the next plan says exactly the same. Nothing errors and nothing converges — a standing
+     * Destructive entry that trains a reader to stop reading drift reports.
+     *
+     * Folding only up to the first `(` would not do: on the integer families `unsigned` and
+     * `zerofill` follow the closing paren, and the patterns that read them are case-sensitive.
+     */
+    private static function foldTypeKeywords(string $rawType): string
+    {
+        // DELIM_CAPTURE keeps the quoted runs, at odd offsets; everything at an even offset is
+        // outside quotes. MySQL doubles an embedded quote, so '' stays inside its own literal.
+        $parts = preg_split("/('(?:[^']|'')*')/", $rawType, -1, \PREG_SPLIT_DELIM_CAPTURE);
+        if (false === $parts) {
+            return strtolower($rawType);
+        }
+
+        foreach ($parts as $i => $part) {
+            if (0 === $i % 2) {
+                $parts[$i] = strtolower($part);
+            }
+        }
+
+        return implode('', $parts);
     }
 }
