@@ -127,6 +127,32 @@ final class DiffCheckedRecord extends Record
     public int $qty = 0;
 }
 
+#[Table(name: 'diff_gen')]
+final class DiffGeneratedDependentRecord extends Record
+{
+    #[Column(ColumnType::BigIntUnsigned, autoIncrement: true)]
+    public ?int $id = null;
+
+    #[Column(ColumnType::Int, renamedFrom: 'requested_qty')]
+    public int $qty_requested = 0;
+
+    #[Column(ColumnType::Int, generatedAs: 'GREATEST(0, `qty_requested`)', generatedMode: GeneratedColumnMode::Virtual)]
+    public ?int $qty_open = null;
+}
+
+#[Table(name: 'diff_gen')]
+final class DiffStoredDependentRecord extends Record
+{
+    #[Column(ColumnType::BigIntUnsigned, autoIncrement: true)]
+    public ?int $id = null;
+
+    #[Column(ColumnType::Int, renamedFrom: 'requested_qty')]
+    public int $qty_requested = 0;
+
+    #[Column(ColumnType::Int, generatedAs: 'GREATEST(0, `qty_requested`)', generatedMode: GeneratedColumnMode::Stored)]
+    public ?int $qty_open = null;
+}
+
 final class SchemaDifferTest extends TestCase
 {
     protected function setUp(): void
@@ -239,6 +265,70 @@ final class SchemaDifferTest extends TestCase
         $drop = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffBaseRecord::class), self::liveBase(columns: $columns)), 'drop_column');
         self::assertSame(ChangeClass::Destructive, $drop->class);
         self::assertSame(['ALTER TABLE `diff_t` DROP COLUMN `legacy`'], $drop->statements);
+    }
+
+    /** Live shape for the rename-with-dependent cases: the generated column still names the OLD column. */
+    private static function liveWithGeneratedDependent(): LiveTable
+    {
+        return new LiveTable('diff_gen', [
+            'id'            => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
+            'requested_qty' => new LiveColumn('requested_qty', 'int(11)', false, '0', false),
+            'qty_open'      => new LiveColumn('qty_open', 'int(11)', true, null, false, 'greatest(0,`requested_qty`)'),
+        ], ['id'], [], []);
+    }
+
+    public function testARenameRebuildsAVirtualGeneratedColumnThatDependsOnIt(): void
+    {
+        // MySQL refuses CHANGE COLUMN while a generated column names the old column (error 3108).
+        // MariaDB accepts it and rewrites the expression itself, so a MariaDB-only check sees
+        // nothing wrong — the reason this is asserted on the emitted SQL rather than an outcome.
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffGeneratedDependentRecord::class),
+            self::liveWithGeneratedDependent(),
+        );
+
+        $rename = self::only($changes, 'rename_column');
+        self::assertSame(ChangeClass::Safe, $rename->class);
+        self::assertCount(3, $rename->statements, 'drop dependent, rename, re-add dependent');
+        self::assertStringContainsString('DROP COLUMN `qty_open`', $rename->statements[0]);
+        self::assertStringContainsString('CHANGE COLUMN `requested_qty` `qty_requested`', $rename->statements[1]);
+        self::assertStringContainsString('ADD COLUMN `qty_open`', $rename->statements[2]);
+        self::assertStringContainsString('qty_requested', $rename->statements[2], 're-added naming the NEW column');
+
+        // The rebuilt column must not also be diffed on its own — it is put back from the very
+        // definition the diff would have compared against.
+        self::assertSame([], array_filter(
+            $changes,
+            static fn (PlannedChange $c): bool => 'qty_open' === $c->subject && 'rename_column' !== $c->kind,
+        ));
+    }
+
+    public function testAStoredDependentIsHandedToAPersonRatherThanRebuilt(): void
+    {
+        // Rebuilding a STORED column rewrites every row, and MariaDB would pay that for nothing
+        // since it needs no rebuild at all. Too consequential to do quietly.
+        $changes = self::mysqlDiffer()->diffTable(
+            TableSchema::fromClass(DiffStoredDependentRecord::class),
+            self::liveWithGeneratedDependent(),
+        );
+
+        $manual = self::only($changes, 'manual');
+        self::assertSame([], $manual->statements, 'Manual carries no SQL');
+        self::assertStringContainsString('STORED generated column "qty_open"', $manual->reason);
+        self::assertStringContainsString('3108', $manual->reason);
+        self::assertSame([], array_filter($changes, static fn (PlannedChange $c): bool => 'rename_column' === $c->kind));
+    }
+
+    public function testARenameWithNoGeneratedDependentStaysASingleStatement(): void
+    {
+        // The contrast: the rebuild is paid only where the engine forces it.
+        $live = new LiveTable('diff_t', [
+            'id'       => new LiveColumn('id', 'bigint(20) unsigned', false, null, true),
+            'sku_code' => new LiveColumn('sku_code', 'varchar(64)', false, 'NULL', false),
+        ], ['id'], [], []);
+
+        $rename = self::only(self::mysqlDiffer()->diffTable(TableSchema::fromClass(DiffRenameRecord::class), $live), 'rename_column');
+        self::assertCount(1, $rename->statements);
     }
 
     public function testDeclaredRenameIsSafeAndDataPreserving(): void

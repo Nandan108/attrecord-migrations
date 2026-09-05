@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A declared column rename no longer emits DDL MySQL refuses.** `#[Column(renamedFrom: 'old')]`
+  planned a single `CHANGE COLUMN`, and MySQL rejects that outright — `ERROR 3108, Column 'old' has
+  a generated column dependency` — whenever another column's `GENERATED ALWAYS` expression names the
+  one being renamed. The `ALTER` does not run at all.
+
+  **MariaDB accepts the same statement and rewrites the stored expression to the new name by
+  itself**, which is what made this invisible: the planner was correct for MariaDB, correct to plan
+  no change for the dependent column, and wrong on both counts for MySQL. Every local engine here is
+  MariaDB, so it passed every check that was not CI.
+
+  The differ now finds the generated columns whose **live** expression names the column being
+  renamed — the live one, because the desired expression already names the new column and so says
+  nothing about what the rename will collide with — and hands them to the emitter, which drops each,
+  renames, and re-adds each from its desired definition. Only MySQL pays: PostgreSQL and SQLite
+  rewrite references themselves and ignore the parameter, and MariaDB does not need it either,
+  though one emitter serves both MySQL-family engines and cannot tell them apart at SQL-build time.
+
+  **A `STORED` dependent is refused rather than rebuilt.** Dropping and re-adding a `VIRTUAL`
+  generated column is a catalogue edit, cheap enough to do on both engines; a `STORED` one rewrites
+  every row, and MariaDB would be paying that for nothing. That case becomes a `Manual` change
+  naming the column and the three steps to take.
+
+  Verified against a real `mysql:8.0.46` container both ways: the old single statement reproduces
+  3108, and the emitted sequence renames with data intact and the generated column recomputing from
+  the new name.
+
 ## [0.8.1] - 2026-09-02
 
 ### Changed

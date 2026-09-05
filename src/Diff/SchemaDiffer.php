@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Nandan108\AttrecordMigrations\Diff;
 
+use Nandan108\Attrecord\Enum\GeneratedColumnMode;
 use Nandan108\Attrecord\Enum\SchemaObjectKind;
 use Nandan108\Attrecord\Schema\ColumnDefinition;
 use Nandan108\Attrecord\Schema\ForeignKeyDefinition;
@@ -95,10 +96,19 @@ final class SchemaDiffer
         }
 
         // --- Columns. ---
+        // A generated column rebuilt as part of a declared rename must not also be diffed on its
+        // own: the rebuild re-adds it from the desired definition, so any drift in it is already
+        // resolved. Computed up front because the dependent may be declared either side of the
+        // column being renamed.
+        $rebuiltByRename = self::columnsRebuiltByRename($desired, $live);
+
         $liveColumnsClaimed = [];
         foreach ($desired->columns as $colName => $col) {
             if (isset($live->columns[$colName])) {
                 $liveColumnsClaimed[$colName] = true;
+                if (isset($rebuiltByRename[$colName])) {
+                    continue; // re-added from this same definition by the rename below
+                }
                 foreach ($this->diffColumn($table, $col, $live) as $change) {
                     $changes[] = $change;
                 }
@@ -109,13 +119,46 @@ final class SchemaDiffer
             $from = $col->renamedFrom;
             if (null !== $from && isset($live->columns[$from]) && !isset($desired->columns[$from])) {
                 $liveColumnsClaimed[$from] = true;
+
+                // MySQL refuses to rename a column that a generated column's expression names
+                // (error 3108) — MariaDB accepts it and rewrites the expression itself, so this is
+                // invisible on a MariaDB dev machine and fatal on a MySQL install. The dependents
+                // travel to the emitter, which rebuilds them around the rename where it must.
+                $dependents = self::generatedDependents($desired, $live, $from);
+                $stored = array_values(array_filter(
+                    $dependents,
+                    static fn (ColumnDefinition $d): bool => GeneratedColumnMode::Stored === ($d->generatedMode ?? GeneratedColumnMode::Stored),
+                ));
+                if ([] !== $stored) {
+                    // Rebuilding a STORED dependent rewrites every row, and on MariaDB it would buy
+                    // nothing at all — so this is handed to a person rather than done quietly.
+                    $changes[] = $this->manual($table, $colName, sprintf(
+                        'declared rename from "%s", but the STORED generated column %s depends on it. '
+                        .'MySQL refuses the rename outright (error 3108) and rebuilding a stored column '
+                        .'rewrites every row, so do it deliberately: drop %s, rename the column, then '
+                        .'re-add it. MariaDB would accept the plain rename and fix the expression itself.',
+                        $from,
+                        implode(', ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'"', $stored)),
+                        implode(' and ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'"', $stored)),
+                    ));
+                    continue;
+                }
+
                 $changes[] = new PlannedChange(
                     $table,
                     'rename_column',
                     $colName,
                     ChangeClass::Safe,
-                    $this->emitter->renameColumn($table, $from, $col),
-                    "declared rename from '{$from}' (data-preserving)",
+                    $this->emitter->renameColumn($table, $from, $col, $dependents),
+                    [] === $dependents
+                        ? "declared rename from '{$from}' (data-preserving)"
+                        : sprintf(
+                            "declared rename from '%s' (data-preserving); the virtual generated column%s %s "
+                            .'is rebuilt around it, which MySQL requires and MariaDB does not',
+                            $from,
+                            1 === \count($dependents) ? '' : 's',
+                            implode(', ', array_map(static fn (ColumnDefinition $d): string => '"'.$d->name.'"', $dependents)),
+                        ),
                 );
                 // MySQL's CHANGE COLUMN re-specifies the whole column in the same statement; on
                 // engines where rename is rename-only (PG/SQLite) any remaining drift surfaces on
@@ -843,6 +886,77 @@ final class SchemaDiffer
             ),
             mayRejectExistingRows: $spec['unique'],
         );
+    }
+
+    /**
+     * The desired definitions of every **live** generated column whose expression names `$oldName`.
+     *
+     * Read from the live expression rather than the desired one, because that is what the engine is
+     * actually holding: the desired expression already names the new column, so it says nothing
+     * about what the rename will collide with. The definitions returned are the *desired* ones,
+     * since those are what a rebuild must put back.
+     *
+     * A column no longer declared is skipped — it is being dropped anyway, and rebuilding it on the
+     * way past would be work in the wrong direction.
+     *
+     * @return list<ColumnDefinition>
+     */
+    private static function generatedDependents(TableSchema $desired, LiveTable $live, string $oldName): array
+    {
+        $dependents = [];
+        foreach ($live->columns as $liveName => $liveCol) {
+            $liveName = (string) $liveName; // numeric-string array key -> int; see above
+            if (null === $liveCol->generationExpression || $liveName === $oldName) {
+                continue;
+            }
+            if (!self::expressionReferences($liveCol->generationExpression, $oldName)) {
+                continue;
+            }
+            $wanted = $desired->columns[$liveName] ?? null;
+            if (null !== $wanted && $wanted->isGenerated) {
+                $dependents[] = $wanted;
+            }
+        }
+
+        return $dependents;
+    }
+
+    /**
+     * Whether a generation expression names `$column`.
+     *
+     * Word-bounded, so `qty` does not match inside `qty_received` — `_` is a word character, which
+     * is what makes the plain boundary sufficient. Backticks are word boundaries themselves, so the
+     * quoted and bare forms both match without a second pattern.
+     *
+     * A name appearing inside a string literal would match too. That costs an unnecessary rebuild of
+     * a virtual column, never a wrong result, and paying it is the right side to err on: the failure
+     * it guards against is an `ALTER` the engine refuses outright.
+     */
+    private static function expressionReferences(string $expression, string $column): bool
+    {
+        return 1 === preg_match('/\\b'.preg_quote($column, '/').'\\b/i', $expression);
+    }
+
+    /**
+     * Which live columns a declared rename is going to rebuild, so the main column loop can leave
+     * them alone — the rebuild re-adds each from the same desired definition it would diff against.
+     *
+     * @return array<string, true>
+     */
+    private static function columnsRebuiltByRename(TableSchema $desired, LiveTable $live): array
+    {
+        $rebuilt = [];
+        foreach ($desired->columns as $colName => $col) {
+            $from = $col->renamedFrom;
+            if (null === $from || isset($live->columns[$colName]) || !isset($live->columns[$from]) || isset($desired->columns[$from])) {
+                continue;
+            }
+            foreach (self::generatedDependents($desired, $live, $from) as $dependent) {
+                $rebuilt[$dependent->name] = true;
+            }
+        }
+
+        return $rebuilt;
     }
 
     /**

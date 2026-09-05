@@ -33,8 +33,24 @@ interface AlterEmitter
      */
     public function modifyColumn(string $table, ColumnDefinition $col, ColumnTuple $desired, array $facets): ?array;
 
-    /** @return list<string> */
-    public function renameColumn(string $table, string $oldName, ColumnDefinition $col): array;
+    /**
+     * Rename a column, rebuilding any generated column whose expression depends on it.
+     *
+     * **MySQL refuses to rename a column another column's `GENERATED ALWAYS` expression mentions**
+     * — `ERROR 3108, Column 'x' has a generated column dependency` — and the `ALTER` does not run at
+     * all. MariaDB accepts the same statement and rewrites the stored expression to the new name by
+     * itself, so this is invisible on a MariaDB dev machine and fatal on a MySQL install.
+     *
+     * `$dependents` carries the **desired** definitions of the generated columns that name the old
+     * column, so an emitter that needs to can drop each, rename, and add each back from a definition
+     * whose expression already names the new column. Engines that rewrite references themselves
+     * (PostgreSQL, SQLite) ignore the parameter.
+     *
+     * @param list<ColumnDefinition> $dependents generated columns referencing `$oldName`, desired shape
+     *
+     * @return list<string>
+     */
+    public function renameColumn(string $table, string $oldName, ColumnDefinition $col, array $dependents = []): array;
 
     /** @return list<string> */
     public function dropColumn(string $table, string $column): array;

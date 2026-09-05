@@ -35,9 +35,33 @@ final class MysqlAlterEmitter implements AlterEmitter
     }
 
     #[\Override]
-    public function renameColumn(string $table, string $oldName, ColumnDefinition $col): array
+    public function renameColumn(string $table, string $oldName, ColumnDefinition $col, array $dependents = []): array
     {
-        return ['ALTER TABLE '.$this->q($table).' CHANGE COLUMN '.$this->q($oldName).' '.$this->dialect->buildColumnLine($col)];
+        $rename = 'ALTER TABLE '.$this->q($table).' CHANGE COLUMN '.$this->q($oldName).' '.$this->dialect->buildColumnLine($col);
+        if ([] === $dependents) {
+            return [$rename];
+        }
+
+        // MySQL refuses the CHANGE COLUMN outright while a generated column's expression names the
+        // old column (error 3108), so each dependent comes out first and goes back afterwards from
+        // its *desired* definition, whose expression already names the new column.
+        //
+        // MariaDB does not need any of this — it accepts the rename and rewrites the stored
+        // expression itself — but one emitter serves both families and cannot tell them apart at SQL
+        // build time. The differ therefore only sends dependents it is cheap to rebuild: a VIRTUAL
+        // generated column stores nothing, so dropping and re-adding it is a catalogue edit on both
+        // engines. A STORED one would be a full-table rewrite, and MariaDB would be paying it for
+        // nothing, which is why that case never reaches here.
+        $statements = [];
+        foreach ($dependents as $dependent) {
+            $statements[] = 'ALTER TABLE '.$this->q($table).' DROP COLUMN '.$this->q($dependent->name);
+        }
+        $statements[] = $rename;
+        foreach ($dependents as $dependent) {
+            $statements[] = 'ALTER TABLE '.$this->q($table).' ADD COLUMN '.$this->dialect->buildColumnLine($dependent);
+        }
+
+        return $statements;
     }
 
     #[\Override]
