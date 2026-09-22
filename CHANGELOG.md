@@ -6,6 +6,44 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-22
+
+**A dependency floor raise, released as a minor.** No code changed and the 249 tests pass against
+attrecord 0.22.0 unchanged — but `^0.21` does not admit `0.22`, so a fresh resolve (CI, or any build
+that runs `composer update` rather than reading a lock) could not satisfy a graph holding both this
+package and a consumer already on 0.22.
+
+The version is a minor rather than a patch because a floor raise is a patch **only** when the newly
+required range is verified backward-compatible across the whole span consumers are forced over.
+attrecord 0.22.0 breaks `SqlDialect::buildUpsertSql()`, whose signature now takes the key as a list
+of columns. That break does not touch *this* package — it consumes attrecord's dialects rather than
+implementing one, which is why no code change was needed — but raising the floor forces every
+consumer of this package over it regardless. What breaks *us* decides the code update; what consumers
+are forced over decides the version.
+
+### Changed
+
+- **Requires attrecord `^0.22`** (was `^0.21`).
+
+### Note — composite primary keys still plan as `Manual`
+
+attrecord 0.22 extends composite primary keys from DDL-only to full CRUD, which makes them newly
+worth adopting. This package's behaviour there is unchanged and worth stating plainly, because the
+conjunction surprises: **a primary-key change is classified `Manual` and therefore never carries
+SQL and never runs**, whatever ceiling you pass to `apply()`. That has been true since the class
+existed — no safe single statement converges a PK — and it applies equally to widening a
+single-column key into a composite one.
+
+Two consequences for anyone converging a table onto a composite key:
+
+- **Write the `ALTER` by hand and run it *before* `apply()`.** The plan will show the change so you
+  can surface it; it will not perform it.
+- **`fingerprint()` is a function of the declared models alone**, never of live state. It therefore
+  advances the moment you declare the new key, while the database still holds the old one — so a
+  caller that skips convergence on an unchanged fingerprint will consider itself converged over a
+  table that was never migrated. Gate the hand-written step on the live schema, not on the
+  fingerprint.
+
 ## [0.9.0] - 2026-09-05
 
 **One bug, released as a minor.** The whole of this release is a bug fix, but fixing it required
@@ -689,7 +727,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.7.0...v0.8.0
