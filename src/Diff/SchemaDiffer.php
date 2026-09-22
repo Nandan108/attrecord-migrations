@@ -781,9 +781,9 @@ final class SchemaDiffer
     private static function desiredFkShape(ForeignKeyDefinition $fk): array
     {
         return [
-            [$fk->localColumn],
+            $fk->localColumns,
             $fk->targetTableName(),
-            [$fk->targetColumnName()],
+            $fk->targetColumnNames(),
             self::canonAction($fk->onDelete->value),
             self::canonAction($fk->onUpdate->value),
         ];

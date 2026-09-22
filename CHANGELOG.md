@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-22
+
+**Multi-column foreign keys converge.** attrecord 0.23 lets a foreign key span several columns, and
+the differ needed two lines to follow, because the live side was already modelled as one:
+`LiveForeignKey` has carried `localColumns` / `referencedColumns` as paired lists, in constraint
+order, since the introspectors were written. What was single-column was the *desired* side, and only
+because attrecord could not express anything else.
+
+`desiredFkShape()` now reads the whole tuple from `ForeignKeyDefinition`, so a declared
+`(order_id, line_id) → (order_id, line_id)` compares against the live constraint as one shape:
+identical converges to nothing, a changed pairing is a drop and re-add. The FK-plumbing rule that
+protects an index an engine created to support a key (`isForeignKeyPlumbing()`) already matched on
+the leading columns of `localColumns`, so a composite key's index is recognised without change.
+
+The emitters needed nothing: all three delegate the constraint text to
+`SqlDialect::buildForeignKeyLine()`.
+
+A minor rather than a patch, on the usual ground — the floor raise forces every consumer over
+attrecord's breaking changes to `ForeignKeyDefinition` and `InboundReference`, though nothing here
+implements either.
+
+### Changed
+
+- **Requires attrecord `^0.23`** (was `^0.22`).
+
 ## [0.10.0] - 2026-09-22
 
 **A dependency floor raise, released as a minor.** No code changed and the 249 tests pass against
@@ -727,7 +752,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.0...v0.8.1
