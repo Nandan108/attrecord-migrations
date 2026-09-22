@@ -9,6 +9,7 @@ use Nandan108\Attrecord\Schema\TableSchema;
 use Nandan108\AttrecordMigrations\Introspect\SchemaIntrospector;
 use Nandan108\AttrecordMigrations\Plan\ChangeClass;
 use Nandan108\AttrecordMigrations\SchemaMigrator;
+use Nandan108\AttrecordMigrations\Tests\Fixtures\CompositeFkRecord;
 use Nandan108\AttrecordMigrations\Tests\Fixtures\CompositePkRecord;
 
 /**
@@ -98,6 +99,84 @@ trait CompositePkCases
         self::assertNotSame([], $manual, 'a narrowed key must be reported');
         self::assertStringContainsString('primary key differs', $manual[0]->reason);
         self::assertSame([], $manual[0]->statements, 'Manual carries a reason, never SQL');
+    }
+
+    /**
+     * A foreign key over the **whole** two-column key converges and re-plans empty.
+     *
+     * The discriminating test for the multi-column FK support, and it is discriminating for a
+     * precise reason: the differ compares a desired key against the live one as a *shape* — local
+     * columns, target, referenced columns, actions. Before attrecord 0.23 the desired side could
+     * only be one column, so `desiredFkShape()` wrapped a scalar. A two-column live key compared
+     * against a one-element desired list matches on no engine, so the live key reads as undeclared
+     * and the declared one as missing: a drop and re-add proposed on every plan, forever, starting
+     * the instant the table is created.
+     *
+     * A test that only asserted "the child table exists" would pass throughout — which is the same
+     * trap `testCompositePkTableConvergesAndReplansEmpty` exists for, one level out.
+     */
+    public function testACompositeForeignKeyConvergesAndReplansEmpty(): void
+    {
+        $migrator = $this->compositePkMigrator();
+        $classes = [CompositePkRecord::class, CompositeFkRecord::class];
+
+        $plan = $migrator->plan($classes);
+        $run = $migrator->apply($plan);
+        self::assertNull($run->error);
+
+        $replan = $migrator->plan($classes);
+        self::assertTrue($replan->isEmpty(), 'a composite-FK table must re-plan empty; got: '.implode(' | ', array_map(
+            static fn ($c): string => "{$c->kind}({$c->table}.{$c->subject}: {$c->reason})",
+            $replan->changes,
+        )));
+    }
+
+    /**
+     * The pairs survive the round trip, in order and paired with the right members.
+     *
+     * Re-planning empty proves the two shapes agree; it does not prove they agree about the *right*
+     * thing, since two identically wrong shapes also compare equal. This reads the pairing back out
+     * of the catalogue instead.
+     */
+    public function testTheForeignKeyPairsRoundTripInDeclaredOrder(): void
+    {
+        $migrator = $this->compositePkMigrator();
+        $migrator->apply($migrator->plan([CompositePkRecord::class, CompositeFkRecord::class]));
+
+        $childTable = TableSchema::fromClass(CompositeFkRecord::class)->tableName;
+        $live = $this->introspector()->introspectTable(Record::connection()->session, $childTable);
+
+        self::assertNotNull($live);
+        self::assertCount(1, $live->foreignKeys, 'two columns are one constraint, not two');
+
+        $fk = array_values($live->foreignKeys)[0];
+        self::assertSame(['parent_owner_id', 'parent_item_id'], $fk->localColumns);
+        self::assertSame(['owner_id', 'item_id'], $fk->referencedColumns, 'paired with the local side, in key order');
+        self::assertSame(TableSchema::fromClass(CompositePkRecord::class)->tableName, $fk->referencedTable);
+    }
+
+    /**
+     * The name attrecord derives for a multi-column key is the name the engine reports back.
+     *
+     * Nobody can check this by reading: the differ keys foreign keys by name, so a derivation that
+     * disagrees with the catalogue presents as one key missing and another undeclared — which is
+     * the same symptom as a shape mismatch and has a different cause.
+     */
+    public function testTheDerivedConstraintNameIsWhatTheEngineReports(): void
+    {
+        $migrator = $this->compositePkMigrator();
+        $migrator->apply($migrator->plan([CompositePkRecord::class, CompositeFkRecord::class]));
+
+        $declared = TableSchema::fromClass(CompositeFkRecord::class);
+        $derivedName = $declared->foreignKeys[0]->constraintName;
+
+        $live = $this->introspector()->introspectTable(Record::connection()->session, $declared->tableName);
+        self::assertNotNull($live);
+        self::assertArrayHasKey($derivedName, $live->foreignKeys, sprintf(
+            'attrecord derived "%s"; the catalogue reports [%s]',
+            $derivedName,
+            implode(', ', array_map(strval(...), array_keys($live->foreignKeys))),
+        ));
     }
 
     /**

@@ -23,6 +23,26 @@ the leading columns of `localColumns`, so a composite key's index is recognised 
 The emitters needed nothing: all three delegate the constraint text to
 `SqlDialect::buildForeignKeyLine()`.
 
+### Fixed
+
+- **PostgreSQL reported a multi-column foreign key as the cross product of its own columns.** The
+  introspector read local columns from `information_schema.key_column_usage` and referenced columns
+  from `constraint_column_usage`, joined on nothing but the constraint — so a two-column key came
+  back as four rows with every column listed twice on each side. The differ then compared that
+  against the declared pairing, never matched, and proposed `replace_foreign_key` — a drop and
+  re-add of the constraint **on every plan, forever**.
+
+  Invisible until now because a one-column key has a cross product of one, and one column was all
+  this package could describe. Found by the first composite-FK convergence test, on PostgreSQL only:
+  MySQL, MariaDB and SQLite were correct throughout.
+
+  Now read from `pg_constraint`, unnesting `conkey` and `confkey` **together** with
+  `WITH ORDINALITY` so each local column is paired with the one it actually references, in
+  constraint order. A second benefit: `constraint_column_usage` is permission-filtered — it shows a
+  constraint only to someone with rights on the referenced table — so it could report a key as
+  having no target at all. attrecord's own `PgsqlReferenceReader` already avoided those views for
+  exactly these two reasons.
+
 A minor rather than a patch, on the usual ground — the floor raise forces every consumer over
 attrecord's breaking changes to `ForeignKeyDefinition` and `InboundReference`, though nothing here
 implements either.

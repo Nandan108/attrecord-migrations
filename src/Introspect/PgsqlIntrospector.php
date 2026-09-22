@@ -144,20 +144,37 @@ final class PgsqlIntrospector implements SchemaIntrospector
             $indexes[$ixName] = new LiveIndex($ixName, $acc['columns'], $acc['unique']);
         }
 
+        // Read from `pg_constraint`, not the information_schema views, because the pairing between
+        // a key's local and referenced columns has to come from one place. `key_column_usage` has a
+        // row per local column and `constraint_column_usage` a row per referenced column, with
+        // nothing to join them on but the constraint — so joining the two is a CROSS PRODUCT, and a
+        // two-column key comes back as four rows with each column listed twice on both sides. That
+        // is invisible on a single-column key, which is every key this package could describe until
+        // attrecord 0.23.
+        //
+        // `conkey` and `confkey` are parallel arrays, so unnesting them TOGETHER pairs each local
+        // column with the one it actually references; `WITH ORDINALITY` keeps that pairing in
+        // constraint order, which is part of the constraint. (`constraint_column_usage` is also
+        // permission-filtered — it shows a constraint only to someone with rights on the referenced
+        // table — so it can silently report a key as having no target at all.)
         $fkRows = $session->fetchAll(
-            "SELECT tc.constraint_name, kcu.column_name,
-                    ccu.table_name AS ref_table, ccu.column_name AS ref_column,
-                    rc.delete_rule, rc.update_rule
-             FROM information_schema.table_constraints tc
-             JOIN information_schema.key_column_usage kcu
-               ON kcu.constraint_name = tc.constraint_name AND kcu.constraint_schema = tc.constraint_schema
-             JOIN information_schema.referential_constraints rc
-               ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.constraint_schema
-             JOIN information_schema.constraint_column_usage ccu
-               ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
-             WHERE tc.table_schema = current_schema() AND tc.table_name = ?
-               AND tc.constraint_type = 'FOREIGN KEY'
-             ORDER BY tc.constraint_name, kcu.ordinal_position",
+            "SELECT c.conname                        AS constraint_name,
+                    a.attname                        AS column_name,
+                    c.confrelid::regclass::text      AS ref_table,
+                    ra.attname                       AS ref_column,
+                    CASE c.confdeltype WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+                                       WHEN 'c' THEN 'CASCADE'   WHEN 'n' THEN 'SET NULL'
+                                       WHEN 'd' THEN 'SET DEFAULT' END AS delete_rule,
+                    CASE c.confupdtype WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+                                       WHEN 'c' THEN 'CASCADE'   WHEN 'n' THEN 'SET NULL'
+                                       WHEN 'd' THEN 'SET DEFAULT' END AS update_rule
+               FROM pg_constraint c
+               JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(local, ref, ord) ON true
+               JOIN pg_attribute a  ON a.attrelid  = c.conrelid  AND a.attnum  = k.local
+               JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = k.ref
+              WHERE c.contype = 'f'
+                AND c.conrelid = to_regclass(?)
+              ORDER BY c.conname, k.ord",
             [$tableName],
         );
         /** @var array<array-key, array{local: list<string>, refTable: string, refCols: list<string>, del: string, upd: string}> $fkAcc */
