@@ -343,6 +343,35 @@ $migrator = new SchemaMigrator($connection, runRecordClass: MyRunRecord::class);
 
 ## Running tests
 
+### Working against an unreleased attrecord
+
+This package depends on a **published** attrecord, so by default `vendor/` holds whatever Packagist
+last served — not the attrecord you may be editing next door. A test run then passes or fails
+against a version that is not the one you changed, which is a green suite that proves nothing.
+
+Create a `composer.local.json` (gitignored, merged by `wikimedia/composer-merge-plugin`) pointing at
+the working copy:
+
+```json
+{
+  "repositories": [
+    { "type": "path", "url": "../attrecord",
+      "options": { "versions": { "nandan108/attrecord": "0.23.0" } } }
+  ],
+  "require": { "nandan108/attrecord": "*@dev" },
+  "minimum-stability": "dev",
+  "prefer-stable": false
+}
+```
+
+Then `composer update nandan108/attrecord`, which symlinks it. Two things to know:
+
+- **The version string there is hand-typed and believed.** It is a label on a path, not a fact about
+  the tree, so a stale one silently misreports what you are testing against.
+- **It masks the declared floor.** `*@dev` satisfies any constraint, so a `require` this package
+  could not actually resolve from Packagist still works locally. Floor problems surface only in CI,
+  which resolves without this file.
+
 ```bash
 # Unit tests (no DB needed) — differ/classifier against hand-built live schemas
 composer test -- --testsuite unit

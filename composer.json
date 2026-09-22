@@ -34,7 +34,18 @@
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.0",
         "phpunit/phpunit": "^10.0",
-        "vimeo/psalm": "^6.0"
+        "vimeo/psalm": "^6.0",
+        "wikimedia/composer-merge-plugin": "^2.0"
+    },
+    "extra": {
+        "merge-plugin": {
+            "include": [
+                "composer.local.json"
+            ],
+            "recurse": true,
+            "replace": true,
+            "ignore-duplicates": false
+        }
     },
     "autoload": {
         "psr-4": {
@@ -54,6 +65,9 @@
         "test-cover": "./vendor/bin/phpunit -c phpunit.xml.dist --coverage-text"
     },
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "wikimedia/composer-merge-plugin": true
+        }
     }
 }
