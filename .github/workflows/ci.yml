@@ -10,7 +10,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Keyed on the event as well as the ref, because a *called* run evaluates this same block. The
+  # Release workflow gates its tag by calling this workflow, so with a group keyed on the ref alone
+  # the release's matrix lands in the push's group and cancels it — seconds after that push CI
+  # started. The cancelled run is what the README's CI badge reads, so every release left `main`
+  # showing "CI failing" while the release itself was green.
+  #
+  # Splitting by event keeps the cancellation worth having and drops the collision: a push still
+  # supersedes an earlier push, a pull-request update still supersedes its predecessor, and a
+  # release's nested run sits in a group of its own where it neither cancels nor is cancelled.
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
