@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-25
+
+**A dependency floor raise, and this one is a patch.**
+
+attrecord 0.24.0 is tagged and on Packagist. `^0.23` does not admit it, and on `0.x` that is not a
+formality: the caret treats the leftmost non-zero component as the breaking axis, so a package
+asking for `^0.23` and one asking for `^0.24` are **disjoint** and no version satisfies both. Any
+graph holding this package and a consumer already on 0.24 therefore has no solution at all. Local
+development hides it, because the sibling path repositories answer before Packagist — the break
+exists only for a fresh resolve.
+
+**A patch rather than a minor, unlike 0.10.0 and 0.11.0**, and the difference is not the size of the
+upstream release. A floor raise is a patch when the span consumers are forced over is *verified*
+backward-compatible for them. The whole public-surface change in attrecord 0.24.0 is two **optional**
+parameters added to `WhereClause::params()` on a **`final`** class — source-compatible for callers,
+and unable to break an implementer, because there cannot be one. Contrast the earlier two, whose
+spans carried real breaks: `SqlDialect::buildUpsertSql()` for 0.10.0, `ForeignKeyDefinition` for
+0.11.0.
+
+No code changed here, and none needed to: this package uses neither `WhereClause` nor `params()`.
+The 258 tests pass against 0.24.0 unchanged, on MySQL, MariaDB, PostgreSQL and SQLite.
+
+### Changed
+
+- **Requires attrecord `^0.24`** (was `^0.23`).
+
 ## [0.11.0] - 2026-09-22
 
 **Multi-column foreign keys converge.** attrecord 0.23 lets a foreign key span several columns, and
@@ -772,7 +798,8 @@ expectations so undetectable drift is pinned as explicitly empty.
 Requires attrecord with the schema-evolution seams (`buildColumnLine` / `buildForeignKeyLine` /
 `renderColumnType` on `SqlDialect`, `#[Column(renamedFrom:)]`).
 
-[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Nandan108/attrecord-migrations/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/Nandan108/attrecord-migrations/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Nandan108/attrecord-migrations/compare/v0.8.1...v0.9.0
