@@ -37,24 +37,27 @@ Done, same cross-dialect gotcha discipline, same release rules.
 
 ## Local dev
 
-attrecord is consumed as a **published dependency** (`^0.11`) — same as any consumer, and the only
-form that installs for anyone outside this working tree.
+attrecord is declared as a **published dependency** — see `composer.json` for the constraint, which
+moves with every attrecord minor and is the only form that installs for anyone outside this working
+tree.
 
-When you need to work on core and this package *together* (a new seam, or a DDL-rendering change),
-point at the working copy temporarily:
+**The working copy is wired through a gitignored `composer.local.json`**, merged by
+`wikimedia/composer-merge-plugin`, exactly as the sibling repos do it. Create it once and
+`composer update nandan108/attrecord` symlinks `../attrecord`; the file never enters git, so nothing
+needs reverting before a commit. Shape and the two things it hides — the version label is hand-typed,
+and `*@dev` satisfies any constraint so a floor this package could not actually resolve still works
+locally — are in [README.md](README.md#working-against-an-unreleased-attrecord).
 
-```bash
-composer config repositories.attrecord path ../attrecord
-composer update nandan108/attrecord
-# ... then, before committing:
-git checkout -- composer.json && composer update nandan108/attrecord
-```
+> **Why this replaced `composer config repositories.attrecord path ../attrecord` (2026-09-22):**
+> that form edits the *tracked* `composer.json`, so it had to be reverted before every commit and the
+> release workflow rejects it outright — it installs for nobody. It also left this the only sibling
+> without an override mechanism, so `vendor/` sat at a stale published attrecord while the tree next
+> door moved: a local `composer test` was exercising a version nobody was editing.
 
-Revert with `git checkout`, not `composer config --unset` — the unset leaves an empty
-`"repositories": {}` behind. (`composer.lock` is gitignored, as it should be for a library, so it
-is not part of the revert — the `composer update` re-resolves it.) **Never commit the path repository**: the release workflow rejects it
-(and a `dev-` constraint) outright, because that combination installs for nobody. A core change
-must be released in attrecord and the constraint bumped here.
+**Never commit a path repository or a `dev-` constraint in `composer.json`** — the release workflow
+refuses both. An attrecord change must be released there and the constraint bumped here, and on `0.x`
+a minor forces that bump across every consumer in one pass (see the DoD's sibling-package item in
+`../attrecord/CLAUDE.md`).
 
 ## Commit & release
 
